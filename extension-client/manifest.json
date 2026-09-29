@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "eTeacher Formative AI Assistant",
+  "version": "1.0.0",
+  "description": "Asistente de retroalimentación formativa Human-in-the-Loop para Programino eTeacher.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "css": ["src/styles/panel.css"],
+      "js": [
+        "src/content/dom-adapter.js",
+        "src/content/ui-panel.js",
+        "src/content/content-main.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
