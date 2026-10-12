@@ -19,8 +19,10 @@
       "matches": ["*://*/*"],
       "css": ["src/styles/panel.css"],
       "js": [
+        "src/content/i18n.js",
         "src/content/dom-adapter.js",
         "src/content/ui-panel.js",
+        "src/content/chat-panel.js", 
         "src/content/content-main.js"
       ],
       "run_at": "document_idle"

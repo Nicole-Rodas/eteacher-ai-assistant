@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import evaluationRoutes from "./routes/evaluation.routes.js";
+import chatRoutes from "./routes/chat.routes.js";
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ app.get("/health", (req, res) => {
 });
 
 app.use("/api/evaluation", evaluationRoutes);
+app.use("/api/chat", chatRoutes);
 
 app.listen(PORT, () => {
   console.log(`Backend eTeacher AI corriendo en http://localhost:${PORT}`);

@@ -4,10 +4,10 @@ window.ETeacherUI = {
   rowsData: [],
 
   LAYER_LABELS: {
-    pregunta_guia: "💡 1. Pregunta guía (Inductiva)",
-    recomendacion_estructural: "🛠️ 2. Recomendación estructural",
-    raiz_del_error: "🔍 3. Explicación raíz del error",
-    completa: "📋 Todas las capas combinadas"
+    pregunta_guia: "1. Pregunta guía (Inductiva)",
+    recomendacion_estructural: "2. Recomendación estructural",
+    raiz_del_error: "3. Explicación raíz del error",
+    completa: "Todas las capas combinadas"
   },
 
   init() {
@@ -48,7 +48,7 @@ window.ETeacherUI = {
             🟠 Baja Certeza / Por Revisar <span class="et-count-pill" id="et-count-low">0</span>
           </button>
           <button class="et-reanalyze-btn" id="et-reanalyze-btn">
-            ✨ Analizar Entregas con IA
+             Analizar Entregas con IA
           </button>
         </div>
 
@@ -74,7 +74,7 @@ window.ETeacherUI = {
         <!-- Botones Inferiores: Aceptar, Borrar, Cancelar -->
         <div class="et-modal-footer">
           <span class="et-footer-hint" id="et-footer-hint">
-            💡 Elige el tipo de respuesta en el menú y usa el lápiz (✏️) si deseas editar el texto o la nota.
+             Elige el tipo de respuesta en el menú y usa el lápiz (✏️) si deseas editar el texto o la nota.
           </span>
           <div class="et-footer-actions">
             <button class="et-btn et-btn-cancel" id="et-btn-cancel">Cancelar</button>
@@ -128,7 +128,7 @@ window.ETeacherUI = {
         r.wasEdited = true;
       });
       this.renderTable();
-      this.showBanner("🗑️ Se limpió el contenido seleccionado. Puedes escribir desde cero con el lápiz (✏️).", false);
+      this.showBanner("Se limpió el contenido seleccionado. Puedes escribir desde cero con el lápiz (✏️).", false);
     });
 
     // Botón ACEPTAR: Inyecta la capa seleccionada (y editada) en ProseMirror y guarda telemetría
@@ -177,9 +177,9 @@ window.ETeacherUI = {
       });
 
       if (res.ok) {
-        this.showBanner(`✅ Se aceptaron ${selected.length} evaluación(es) y se inyectó en el editor ProseMirror.`, false);
+        this.showBanner(`Se aceptaron ${selected.length} evaluación(es) y se inyectó en el editor ProseMirror.`, false);
       } else {
-        this.showBanner(`✅ Evaluaciones guardadas. (${res.error})`, false);
+        this.showBanner(`Evaluaciones guardadas. (${res.error})`, false);
       }
     });
   },
@@ -229,7 +229,7 @@ window.ETeacherUI = {
   async analyzeAllSubmissions() {
     const btn = document.getElementById("et-reanalyze-btn");
     btn.disabled = true;
-    btn.textContent = "⏳ Analizando con Gemini...";
+    btn.textContent = "Analizando con Gemini...";
     this.showBanner("Evaluando entregas del ejercicio y generando las 3 capas formativas...", false);
 
     for (const row of this.rowsData) {
@@ -259,7 +259,7 @@ window.ETeacherUI = {
         const q = d.retroalimentacion?.pregunta_guia || "";
         const r = d.retroalimentacion?.recomendacion_estructural || "";
         const e = d.retroalimentacion?.raiz_del_error || "";
-        const all = `💡 Pregunta guía: ${q}\n🛠️ Recomendación: ${r}\n🔍 Raíz del error: ${e}`;
+        const all = `Pregunta guía: ${q}\n Recomendación: ${r}\n Raíz del error: ${e}`;
 
         row.layers = {
           pregunta_guia: q,
@@ -277,7 +277,7 @@ window.ETeacherUI = {
     }
 
     btn.disabled = false;
-    btn.textContent = "✨ Re-analizar con IA";
+    btn.textContent = "Re-analizar con IA";
     document.getElementById("et-status-banner").style.display = "none";
 
     this.updateTabsUI();
@@ -303,8 +303,8 @@ window.ETeacherUI = {
 
     const hint = document.getElementById("et-footer-hint");
     hint.textContent = this.activeTab === "LOW"
-      ? "🔍 Haz clic en el correo/nombre para saltar al editor en la página, o elige una capa y edítala con el lápiz (✏️)."
-      : "💡 Selecciona entre las 3 capas formativas en el menú desplegable y usa el lápiz (✏️) para personalizar el texto.";
+      ? "Haz clic en el correo/nombre para saltar al editor en la página, o elige una capa y edítala con el lápiz (✏️)."
+      : "Selecciona entre las 3 capas formativas en el menú desplegable y usa el lápiz (✏️) para personalizar el texto.";
   },
 
   renderTable() {

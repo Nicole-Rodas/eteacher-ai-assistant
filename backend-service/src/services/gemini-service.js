@@ -40,7 +40,7 @@ export async function generateFormativeFeedback(promptText) {
       const result = await model.generateContent(promptText);
       const rawText = result.response.text();
 
-      console.log(`✅ Respuesta generada con éxito usando el modelo: [${modelName}]`);
+      console.log(`Respuesta de evaluacion generada con exito usando el modelo: [${modelName}]`);
 
       try {
         return JSON.parse(rawText);
@@ -50,11 +50,57 @@ export async function generateFormativeFeedback(promptText) {
       }
     } catch (error) {
       lastError = error;
-      console.warn(`⚠️ Modelo [${modelName}] saturado o no disponible (${error.status || "Error"}). Saltando al siguiente...`);
+      console.warn(`Modelo [${modelName}] saturado o no disponible en evaluacion (${error.status || "Error"}). Saltando al siguiente...`);
       await sleep(400);
       continue;
     }
   }
 
-  throw new Error(`No se pudo obtener respuesta de ningún modelo: ${lastError?.message}`);
+  throw new Error(`No se pudo obtener respuesta de ningun modelo: ${lastError?.message}`);
+}
+
+export async function generateChatResponse(systemPrompt, messages) {
+  const modelsToTry = [...new Set(FALLBACK_MODELS)];
+  let lastError = null;
+
+  // Extraemos el ultimo mensaje enviado por el usuario
+  const lastMessage = messages[messages.length - 1].content;
+  
+  // Transformamos el historial previo al formato que requiere el SDK de Gemini
+  const geminiHistory = messages.slice(0, -1).map(msg => ({
+    role: msg.role === "assistant" ? "model" : "user",
+    parts: [{ text: msg.content }]
+  }));
+
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: systemPrompt,
+        generationConfig: {
+          temperature: 0.7 // Temperatura ligeramente mas alta para conversacion natural
+        }
+      });
+
+      // Iniciamos el chat inyectando el historial y el prompt del sistema
+      const chatSession = model.startChat({
+        history: geminiHistory
+      });
+
+      const result = await chatSession.sendMessage(lastMessage);
+      const rawText = result.response.text();
+
+      console.log(`Respuesta de chat generada con exito usando el modelo: [${modelName}]`);
+      
+      return rawText;
+      
+    } catch (error) {
+      lastError = error;
+      console.warn(`Modelo [${modelName}] saturado o no disponible para chat (${error.status || "Error"}). Saltando al siguiente...`);
+      await sleep(400);
+      continue;
+    }
+  }
+
+  throw new Error(`No se pudo obtener respuesta del chat de ningun modelo: ${lastError?.message}`);
 }
