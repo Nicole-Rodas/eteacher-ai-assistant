@@ -1,89 +1,162 @@
 window.ETeacherDOM = {
+  ICONS: {
+    bolt: '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
+    check: '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+    loader: '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>'
+  },
+
   cleanText(str = "") {
-    return str.replace(/[\u2066-\u2069\u200B-\u200F\uFEFF]/g, "").trim();
+    return String(str || "").replace(/[\u2066-\u2069\u200B-\u200F\uFEFF]/g, "").trim();
   },
 
-  isRealEvaluableTask(container) {
-    if (!container) return false;
-    
-    const icons = Array.from(container.querySelectorAll("svg.history-icon, .history-icon"));
-    
-    return icons.some(icon => {
-      const viewBox = icon.getAttribute("viewBox") || "";
-      if (viewBox.includes("384 512")) return true;
+  extractCanvasBase64(containerElement) {
+    if (!containerElement) return null;
+    const canvas = containerElement.querySelector("canvas");
+    if (!canvas) return null;
 
-      const path = icon.querySelector("path");
-      if (path) {
-        const d = path.getAttribute("d") || "";
-        if (d.startsWith("M192")) return true;
+    try {
+      const dataUrl = canvas.toDataURL("image/png");
+      return dataUrl.split(",")[1] || null;
+    } catch {
+      return null;
+    }
+  },
+
+  extractDeepContent(obj) {
+    if (obj === null || obj === undefined) return "";
+    if (typeof obj === "string") return this.cleanText(obj);
+    if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
+
+    if (Array.isArray(obj)) {
+      return obj
+        .map(item => this.extractDeepContent(item))
+        .filter(Boolean)
+        .join(" | ");
+    }
+
+    if (typeof obj === "object") {
+      if (typeof obj.content === "string") return this.cleanText(obj.content);
+      if (obj.content && typeof obj.content === "object") {
+        const nested = this.extractDeepContent(obj.content);
+        if (nested) return nested;
       }
-      return false;
-    });
-  },
+      if (typeof obj.code === "string") return this.cleanText(obj.code);
+      if (typeof obj.text === "string") return this.cleanText(obj.text);
+      if (typeof obj.value === "string") return this.cleanText(obj.value);
+      if (obj.selected_options !== undefined) {
+        return "Opciones: " + this.extractDeepContent(obj.selected_options);
+      }
+      if (obj.selected !== undefined) {
+        return "Selección: " + this.extractDeepContent(obj.selected);
+      }
 
-  injectExerciseButtons(onOpenAssistant) {
-    document.querySelectorAll(".et-bar-trigger-btn").forEach(btn => {
-      const block = btn.closest(".section-item-container");
-      if (block) {
-        if (!this.isRealEvaluableTask(block)) {
-          btn.remove();
-          const header = block.querySelector(".section-item-header");
-          if (header) header.removeAttribute("data-et-injected");
+      const collected = [];
+      for (const key of Object.keys(obj)) {
+        if (key === "data" || key === "given_feedback" || key === "marks" || key.endsWith("_id")) {
+          continue;
         }
-      } else {
-        btn.remove();
+        const val = this.extractDeepContent(obj[key]);
+        if (val) collected.push(val);
       }
-    });
+      return collected.join("\n");
+    }
 
-    const exerciseContainers = Array.from(document.querySelectorAll(".section-item-container"));
-
-    exerciseContainers.forEach((container, idx) => {
-      if (!this.isRealEvaluableTask(container)) {
-        return; 
-      }
-
-      const header = container.querySelector(".section-item-header");
-      if (!header) return;
-
-      if (header.dataset.etInjected === "true" || header.querySelector(".et-bar-trigger-btn")) return;
-      header.dataset.etInjected = "true";
-
-      let titleText = "Tarea Evaluable";
-      const titleSpan = header.querySelector("span.markdown span") || header.querySelector(".markdown");
-      if (titleSpan) titleText = this.cleanText(titleSpan.innerText);
-
-      const pageChapter = this.detectChapterFromPage();
-      
-      this.appendButtonToElement(header, {
-        chapterNum: pageChapter,
-        conceptId: this.mapChapterToConceptId(pageChapter),
-        exerciseCode: `ej-${pageChapter}-${idx + 1}`,
-        unitTitle: titleText,
-        problemStatement: this.extractStatementFromBlock(container, titleText),
-        exerciseBlock: container
-      }, onOpenAssistant);
-    });
+    return "";
   },
 
-  appendButtonToElement(container, exerciseData, onOpenAssistant) {
-    if (container.querySelector(".et-bar-trigger-btn")) return;
+  parsePrograminoNetworkBatch(rawData) {
+    if (!Array.isArray(rawData)) return [];
 
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "et-bar-trigger-btn";
-    
-    btn.innerHTML = window.ETeacherI18n.getText("EVAL_BTN");
-    btn.title = `${window.ETeacherI18n.getText("EVAL_TITLE")} ${exerciseData.unitTitle}`;
-    
-    btn.style.cssText = "margin-left: auto; align-self: center; padding: 4px 12px; font-size: 13px; font-weight: bold; cursor: pointer; border-radius: 6px; border: none; background: #e67e22; color: white; display: flex; align-items: center; gap: 5px; height: fit-content;";
+    let rows = rawData;
+    if (Array.isArray(rawData[0]) && Array.isArray(rawData[0][0]) && !Array.isArray(rawData[0][0][0])) {
+      rows = rawData[0];
+    }
 
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      onOpenAssistant(exerciseData);
-    });
+    const context = this.extractModalExerciseContext();
 
-    container.appendChild(btn);
+    return rows.map((row, index) => {
+      if (!Array.isArray(row)) return null;
+
+      const studentInfo = row[0] || {};
+      const classInfo = row[1] || {};
+      const submissions = Array.isArray(row[2]) ? row[2] : [];
+
+      const partesEncontradas = [];
+      const tiposDetectados = [];
+      const submissionsMeta = [];
+
+      submissions.forEach((sub, idx) => {
+        if (!sub || typeof sub !== "object") return;
+
+        const subType = sub.submission_type || {};
+        const tipoKeys = Object.keys(subType);
+        const tipoKey = tipoKeys[0] || "Respuesta";
+        let givenFeedback = null;
+
+        if (tipoKeys.length > 0 && subType[tipoKey]) {
+          tiposDetectados.push(tipoKey);
+          const typeObj = subType[tipoKey];
+          givenFeedback = typeObj?.data?.given_feedback || null;
+
+          const extractedContent = this.extractDeepContent(typeObj);
+          if (extractedContent && extractedContent.length > 0) {
+            const label = submissions.length > 1
+              ? `[PARTE ${idx + 1} - ${tipoKey.toUpperCase()}]:\n${extractedContent}`
+              : `[${tipoKey.toUpperCase()}]:\n${extractedContent}`;
+            partesEncontradas.push(label);
+          }
+        }
+
+        submissionsMeta.push({
+          submission_id: sub.submission_id || null,
+          section_item_part_id: sub.section_item_part_id || null,
+          marks: Array.isArray(sub.marks) ? sub.marks : [],
+          given_feedback: givenFeedback
+        });
+      });
+
+      const modalContent = document.querySelector(".submission_modal_content") || document.body;
+      const canvasExtracted = this.extractCanvasBase64(modalContent);
+
+      const finalCode = partesEncontradas.join("\n\n").trim();
+      const hasSubmission = finalCode.length > 0 || Boolean(canvasExtracted);
+      const alreadyGraded = submissionsMeta.some(
+        m => m.given_feedback !== null || (m.marks && m.marks.length > 0)
+      );
+
+      return {
+        id: studentInfo.id || (`stu-${index + 1}`),
+        numero: index + 1,
+        correo: "estudiante@umss.edu.bo",
+        nombre: this.cleanText(studentInfo.name || (`Estudiante ${index + 1}`)),
+        grupo: this.cleanText(classInfo.name || ""),
+        gestion: classInfo.year || "",
+        studentCode: finalCode || (canvasExtracted ? "[DIAGRAMA_EN_CANVAS]" : "[SIN ENTREGA]"),
+        canvasImage: canvasExtracted,
+        tipoRespuesta: tiposDetectados.length > 0 ? tiposDetectados.join(" + ") : (canvasExtracted ? "Diagrama" : "Sin Entrega"),
+        hasSubmission: hasSubmission,
+        alreadyGraded: alreadyGraded,
+        submissionsMeta: submissionsMeta,
+        chapterNum: context.chapterNum,
+        conceptId: context.conceptId,
+        unitTitle: context.unitTitle,
+        problemStatement: context.problemStatement
+      };
+    }).filter(Boolean);
+  },
+
+  extractModalExerciseContext() {
+    const pageChapter = this.detectChapterFromPage();
+    const modal = document.querySelector(".submission_modal_content") || document.body;
+    const titleEl = modal.querySelector(".section-item-header, h1, h2, h3");
+    const unitTitle = titleEl ? this.cleanText(titleEl.innerText).split("\n")[0] : "Tarea Evaluable";
+
+    return {
+      chapterNum: pageChapter,
+      conceptId: this.mapChapterToConceptId(pageChapter),
+      unitTitle: unitTitle,
+      problemStatement: this.extractStatementFromBlock(modal, unitTitle)
+    };
   },
 
   detectChapterFromPage() {
@@ -93,60 +166,126 @@ window.ETeacherDOM = {
   },
 
   extractStatementFromBlock(block, headerText) {
-    if (!block) return "Analizar la entrega.";
-    const candidates = Array.from(block.querySelectorAll("p, .statement, .description"));
-    for (const el of candidates) {
-      const txt = this.cleanText(el.innerText || "");
-      if (txt.length > 15 && !this.isRealEvaluableTask(el)) {
-        return txt.split("\n")[0].trim();
+    const currentTitle = (headerText || "").toLowerCase().trim();
+
+    // 1. Encontrar el contenedor de la sección en la página que coincide con el título
+    let matchedSection = null;
+    const allSections = Array.from(document.querySelectorAll(".section-item, .content-item"));
+
+    for (const section of allSections) {
+      const titleEl = section.querySelector(".section-item-header, h1, h2, h3, .title");
+      const secTitle = titleEl ? this.cleanText(titleEl.innerText).toLowerCase() : "";
+      
+      // Coincidencia exacta o cruzada del título del ejercicio
+      if (currentTitle && secTitle && (secTitle.includes(currentTitle) || currentTitle.includes(secTitle))) {
+        matchedSection = section;
+        break;
       }
     }
+
+    // 2. Definir el ámbito de búsqueda: priorizar la sección coincidente, luego el bloque pasado
+    const scope = matchedSection || block || document.querySelector(".submission_modal_content");
+
+    if (scope) {
+      // A) Si esta sección específica tiene un blockquote (ej. preguntas de opción múltiple / definiciones)
+      const bq = scope.querySelector("blockquote");
+      if (bq) {
+        const bqText = this.cleanText(bq.innerText || "");
+        if (bqText.length > 8) {
+          const parentSpan = bq.closest("span.markdown, .markdown") || bq.parentElement;
+          const introP = parentSpan ? parentSpan.querySelector("p") : null;
+          const introText = (introP && introP !== bq.querySelector("p"))
+            ? this.cleanText(introP.innerText) + "\n"
+            : "";
+          return `${introText}"${bqText}"`;
+        }
+      }
+
+      // B) Si no tiene blockquote, extraer los párrafos de su propio contenedor markdown
+      const md = scope.querySelector(".section-item-content span.markdown, span.markdown, .markdown");
+      if (md) {
+        const txt = this.cleanText(md.innerText || "");
+        if (txt.length > 15 && !txt.toLowerCase().includes("ejercicio de pensamiento")) {
+          return txt;
+        }
+      }
+
+      // C) Párrafos directos de la consigna dentro de la sección
+      const paragraphs = Array.from(scope.querySelectorAll("p, .statement, .description"))
+        .map(p => this.cleanText(p.innerText || ""))
+        .filter(t => t.length > 15 &&
+                     !t.toLowerCase().includes("guardar") &&
+                     !t.toLowerCase().includes("comentario") &&
+                     !t.toLowerCase().includes("ejercicio de pensamiento"));
+
+      if (paragraphs.length > 0) {
+        return paragraphs.join("\n\n");
+      }
+    }
+
+    // 3. Fallback
     return headerText || "Analizar el ejercicio entregado.";
   },
 
   mapChapterToConceptId(chapterNum) {
     const map = {
       1: "cap1_lenguaje", 2: "cap2_pensar", 3: "cap3_hablar", 4: "cap4_variables",
-      5: "cap5_condicionales", 6: "cap6_bucle_while", 7: "cap7_funciones", 
+      5: "cap5_condicionales", 6: "cap6_bucle_while", 7: "cap7_funciones",
       8: "cap8_bucle_for", 9: "cap9_errores", 10: "cap10_algoritmos", 11: "cap11_archivos"
     };
     return map[chapterNum] || "cap7_funciones";
   },
 
-  // ============================================================================
-  // MOTOR DE EXTRACCIÓN EN LOTE (CON STORAGE LOCAL Y CONTADOR EN VIVO EN REVISION)
-  // ============================================================================
-  
+  injectExerciseButtons() {
+    window.ETeacherNetwork?.init();
+  },
+
   observeModalAndInjectButton(onBatchCollect) {
+    window.ETeacherNetwork?.init((batch) => {
+      const btnBatch = document.querySelector(".et-batch-btn");
+      if (btnBatch && !btnBatch.disabled) {
+        btnBatch.innerHTML = `${this.ICONS.bolt}Evaluar ${batch.length} Entregas (Instantáneo)`;
+        btnBatch.style.background = "#27ae60";
+      }
+    });
+
     const observer = new MutationObserver(() => {
       const modalContent = document.querySelector(".submission_modal_content");
-      
-      // Si el modal está abierto y nuestro botón de lote aún no existe
+
       if (modalContent && !document.querySelector(".et-batch-btn")) {
-        const headerBox = document.querySelector(".thaw-combobox")?.parentElement;
-        
+        const combobox = document.querySelector(".thaw-combobox");
+        const headerBox = combobox ? combobox.parentElement : null;
+
         if (headerBox) {
           const btnBatch = document.createElement("button");
+          btnBatch.type = "button";
           btnBatch.className = "et-batch-btn";
-          btnBatch.innerHTML = "⚡ Recolectar Datos de Clase";
-          btnBatch.style.cssText = "margin-left: 20px; padding: 6px 14px; font-weight: bold; background: #8e44ad; color: white; border-radius: 6px; border: none; cursor: pointer; display: flex; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: background 0.3s;";
-          
+
+          const intercepted = window.ETeacherNetwork?._interceptedBatch;
+          const hasInstantData = intercepted && intercepted.length > 0;
+
+          btnBatch.innerHTML = hasInstantData
+            ? `${this.ICONS.bolt}Evaluar ${intercepted.length} Entregas (Instantáneo)`
+            : `${this.ICONS.bolt}Recolectar Datos de Clase`;
+
+          btnBatch.style.cssText = `margin-left: 20px; padding: 6px 14px; font-weight: 600; font-size: 13px; background: ${hasInstantData ? "#27ae60" : "#2c3e50"}; color: white; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.15); transition: background 0.2s;`;
+
           btnBatch.onclick = async (e) => {
             e.preventDefault();
             btnBatch.disabled = true;
             btnBatch.style.background = "#e67e22";
 
-            // Le pasamos el botón a la función para que pueda actualizar el texto dinámicamente
             const allStudentsData = await this.harvestAllClassSubmissions(btnBatch);
-            
-            btnBatch.innerHTML = `${allStudentsData.length} Capturados`;
+
+            btnBatch.innerHTML = `${this.ICONS.check}${allStudentsData.length} Capturados`;
             btnBatch.style.background = "#2980b9";
-            
+            btnBatch.disabled = false;
+
             if (onBatchCollect) {
               onBatchCollect(allStudentsData);
             }
           };
-          
+
           headerBox.appendChild(btnBatch);
         }
       }
@@ -155,55 +294,72 @@ window.ETeacherDOM = {
     observer.observe(document.body, { childList: true, subtree: true });
   },
 
+  async waitForStudentChange(previousName, maxWaitMs = 4000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      const inputNombre = document.querySelector(".thaw-combobox__input");
+      const currentName = inputNombre ? this.cleanText(inputNombre.value) : "";
+      if (currentName && currentName !== previousName) {
+        await new Promise(r => setTimeout(r, 150));
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 80));
+    }
+    return false;
+  },
+
   async harvestAllClassSubmissions(btnElement) {
-    console.log("[eTeacher] Iniciando recolección segura...");
+    const intercepted = window.ETeacherNetwork?._interceptedBatch;
+    if (intercepted && intercepted.length > 0) {
+      return intercepted;
+    }
+
     const allStudentsData = [];
     let hasNext = true;
-    let failsafe = 0; // Subimos el límite a 300 para cubrir cursos grandes
-
-    // Limpiamos el almacenamiento temporal antes de un nuevo lote
-    await chrome.storage.local.set({ 'et_current_batch': [] });
+    let failsafe = 0;
+    const context = this.extractModalExerciseContext();
 
     while (hasNext && failsafe < 300) {
       failsafe++;
-      
-      const currentStudent = this.extractSubmissionsForExercise()[0];
-      
-      if (currentStudent && !allStudentsData.find(s => s.nombre === currentStudent.nombre)) {
+      const currentStudent = this.extractSubmissionsForExercise(context, false)[0];
+
+      if (currentStudent) {
+        currentStudent.id = `stu-${allStudentsData.length + 1}`;
+        currentStudent.numero = allStudentsData.length + 1;
         allStudentsData.push(currentStudent);
-        
-        // 1. Actualización visual en el botón
+
         if (btnElement) {
-          btnElement.innerHTML = `Recolectando: ${allStudentsData.length}...`;
+          btnElement.innerHTML = `${this.ICONS.loader}Recolectando: ${allStudentsData.length}...`;
         }
-        
-        // 2. Guardado persistente inmediato en la memoria de la extensión
-        await chrome.storage.local.set({ 'et_current_batch': allStudentsData });
-        console.log(`💾 [eTeacher] Guardado en local: ${currentStudent.nombre}`);
+
+        try {
+          if (typeof chrome !== "undefined" && chrome.storage?.local) {
+            await chrome.storage.local.set({ et_current_batch: allStudentsData });
+          }
+        } catch {}
       }
 
       const nextBtn = document.querySelector(".submission_modal_next");
-      const isHidden = !nextBtn || nextBtn.classList.contains("hidden") || nextBtn.style.display === "none";
+      const isHidden = !nextBtn || nextBtn.classList.contains("hidden") || nextBtn.style.display === "none" || nextBtn.disabled;
 
       if (!isHidden) {
-        nextBtn.click(); // 🖱️ Clic fantasma
-        await new Promise(r => setTimeout(r, 700)); // Espera a que renderice la red
+        const previousName = currentStudent ? currentStudent.nombre : "";
+        nextBtn.click();
+        const changed = await this.waitForStudentChange(previousName, 2500);
+        if (!changed) hasNext = false;
       } else {
-        console.log("[eTeacher] Fin de la lista alcanzado.");
-        hasNext = false; 
+        hasNext = false;
       }
     }
 
-    console.log(`🎉 [eTeacher] ¡Escaneo completado! ${allStudentsData.length} estudiantes recolectados y guardados de forma segura.`);
     return allStudentsData;
   },
 
-  extractSubmissionsForExercise() {
-    const modal = document.querySelector(".submission_modal_content")?.parentElement || document.body;
-    let canvasBase64 = null;
-
+  extractSubmissionsForExercise(exerciseInfo = null, includeDomNode = true) {
+    const modalContent = document.querySelector(".submission_modal_content") || document.body;
+    const canvasBase64 = this.extractCanvasBase64(modalContent);
     const inputNombre = document.querySelector(".thaw-combobox__input");
-    const nombreEstudiante = inputNombre ? inputNombre.value.trim() : "Estudiante";
+    const nombreEstudiante = inputNombre ? this.cleanText(inputNombre.value) : "Estudiante";
 
     const extractores = [
       {
@@ -220,19 +376,51 @@ window.ETeacherDOM = {
       {
         nombre: "Texto Abierto",
         extraer: (node) => {
-          const area = node.querySelector("textarea");
-          return (area && area.value.trim().length > 0) ? this.cleanText(area.value) : null;
+          const areas = Array.from(node.querySelectorAll("textarea"));
+          const textosArea = areas
+            .map(a => this.cleanText(a.value || a.textContent || a.innerText || ""))
+            .filter(t => t.length > 0);
+          if (textosArea.length > 0) return textosArea.join("\n");
+
+          const inputs = Array.from(node.querySelectorAll("input[type='text'], input:not([type])"));
+          const validInputs = inputs
+            .filter(i => !i.classList.contains("thaw-combobox__input"))
+            .map(i => this.cleanText(i.value || ""))
+            .filter(t => t.length > 0);
+          if (validInputs.length > 0) return validInputs.join(" | ");
+
+          const editables = Array.from(node.querySelectorAll("[contenteditable='true']:not(.ProseMirror)"));
+          const textosEdit = editables
+            .map(el => this.cleanText(el.innerText || ""))
+            .filter(t => t.length > 0);
+          if (textosEdit.length > 0) return textosEdit.join("\n");
+
+          return null;
         }
       },
       {
         nombre: "Opción Marcada",
         extraer: (node) => {
-          const inputs = Array.from(node.querySelectorAll("input[type='radio']:checked, input[type='checkbox']:checked"));
-          if (inputs.length === 0) return null;
-          return inputs.map(opt => {
+          const checkedInputs = Array.from(node.querySelectorAll("input[type='radio']:checked, input[type='checkbox']:checked"));
+          if (checkedInputs.length === 0) return null;
+
+          const seleccionadas = checkedInputs.map(opt => {
             const label = opt.closest("label") || opt.parentElement;
             return this.cleanText(label ? label.innerText : opt.value);
           }).join(" | ");
+
+          const todasLasOpciones = Array.from(node.querySelectorAll("input[type='radio'], input[type='checkbox']"))
+            .map(opt => {
+              const lbl = opt.closest("label") || opt.parentElement;
+              return this.cleanText(lbl ? lbl.innerText : opt.value);
+            })
+            .filter((v, i, a) => v && a.indexOf(v) === i);
+
+          if (todasLasOpciones.length > 0) {
+            return `Opción elegida: [${seleccionadas}]\n(Alternativas disponibles: ${todasLasOpciones.join(" / ")})`;
+          }
+
+          return seleccionadas;
         }
       },
       {
@@ -245,103 +433,45 @@ window.ETeacherDOM = {
       },
       {
         nombre: "Diagrama",
-        extraer: (node) => {
-          const canvas = node.querySelector("canvas");
-          if (!canvas) return null;
-          try { canvasBase64 = canvas.toDataURL("image/png"); } catch(e) {}
-          return "Imagen gráfica detectada.";
-        }
+        extraer: () => null
       }
     ];
 
-    let partesEncontradas = [];
-    let tiposDetectados = [];
+    const partesEncontradas = [];
+    const tiposDetectados = [];
 
     for (const extractor of extractores) {
-      const resultado = extractor.extraer(modal);
-      if (resultado) {
+      const resultado = extractor.extraer(modalContent);
+      if (resultado && resultado.trim().length > 0) {
         partesEncontradas.push(`[${extractor.nombre.toUpperCase()}]:\n${resultado}`);
         tiposDetectados.push(extractor.nombre);
       }
     }
 
-    if (partesEncontradas.length === 0) {
-      tiposDetectados.push("Raspado de Emergencia");
-      const clone = modal.cloneNode(true);
-      clone.querySelectorAll(".et-bar-trigger-btn, .section-item-header, .thaw-combobox").forEach(el => el.remove());
-      partesEncontradas.push(`[TEXTO PLANO]:\n${this.cleanText(clone.innerText)}`);
+    const currentCode = partesEncontradas.join("\n\n").trim();
+    const hasSubmission = currentCode.length > 0 || Boolean(canvasBase64);
+    const typeDetected = tiposDetectados.length > 0 ? tiposDetectados.join(" + ") : (canvasBase64 ? "Diagrama" : "Sin Entrega");
+    const context = exerciseInfo || this.extractModalExerciseContext();
+
+    const studentObj = {
+      id: "stu-1",
+      numero: 1,
+      correo: "estudiante@umss.edu.bo",
+      nombre: nombreEstudiante,
+      studentCode: currentCode || (canvasBase64 ? "[DIAGRAMA_EN_CANVAS]" : "[SIN ENTREGA]"),
+      canvasImage: canvasBase64,
+      tipoRespuesta: typeDetected,
+      hasSubmission: hasSubmission,
+      chapterNum: context.chapterNum,
+      conceptId: context.conceptId,
+      unitTitle: context.unitTitle,
+      problemStatement: context.problemStatement
+    };
+
+    if (includeDomNode) {
+      studentObj.editorNode = modalContent;
     }
 
-    const currentCode = partesEncontradas.join("\n\n");
-    const typeDetected = tiposDetectados.join(" + ");
-
-    return [{
-      id: "stu-" + Math.floor(Math.random() * 10000), // Genera un ID temporal único
-      numero: 1, 
-      correo: "estudiante@umss.edu.bo", 
-      nombre: nombreEstudiante, 
-      studentCode: currentCode, 
-      canvasImage: canvasBase64, 
-      editorNode: modal, 
-      tipoRespuesta: typeDetected 
-    }];
-  },
-
-  scrollToEditor(editorNode) {
-    if (!editorNode) return;
-    editorNode.scrollIntoView({ behavior: "smooth", block: "center" });
-    editorNode.classList.add("et-highlight-editor");
-    setTimeout(() => editorNode.classList.remove("et-highlight-editor"), 2500);
-  },
-
-  // ============================================================================
-  // OBJETIVO 5: INYECCIÓN Y ENVÍO AUTOMÁTICO (HUMAN-IN-THE-LOOP VS AUTOMATIC)
-  // ============================================================================
-  async injectFeedbackIntoProseMirror(exerciseBlock, { customText = "", calificacion = 0, certeza = 0 }) {
-    const scope = exerciseBlock || document;
-    let proseMirror = scope.querySelector("div.ProseMirror[contenteditable='true']") || document.querySelector("div.ProseMirror[contenteditable='true']");
-
-    if (!proseMirror) {
-      const buttons = Array.from(document.querySelectorAll("button, a, span[role='button'], div[role='button']"));
-      const addCommentBtn = buttons.find(btn => /a[ñn]adir comentarios|agregar comentario|add comment/i.test(this.cleanText(btn.innerText || "")));
-      if (addCommentBtn) {
-        addCommentBtn.click();
-        await new Promise(r => setTimeout(r, 450));
-        proseMirror = document.querySelector("div.ProseMirror[contenteditable='true']");
-      }
-    }
-
-    if (!proseMirror) return { ok: false, error: "No se encontró el editor ProseMirror." };
-
-    const lines = customText.split("\n").map(line => line.trim()).filter(Boolean);
-    const paragraphsHtml = lines.map(line => `<p>${this.escapeHtml(line)}</p>`).join("");
-
-    proseMirror.focus();
-    proseMirror.innerHTML = `${paragraphsHtml}<p><strong>${window.ETeacherI18n.getText("SCORE")}</strong> ${this.escapeHtml(String(calificacion))}/100</p><p><br class="ProseMirror-trailingBreak"></p>`;
-    proseMirror.dispatchEvent(new Event("input", { bubbles: true }));
-    proseMirror.dispatchEvent(new Event("change", { bubbles: true }));
-
-    // Filtro Híbrido: Envío automático si la certeza de la IA es >= 85%
-    if (certeza >= 85) {
-      console.log(`🚀 [Certeza Alta: ${certeza}%] Enviando retroalimentación automáticamente...`);
-      await new Promise(r => setTimeout(r, 500)); 
-      
-      const botones = Array.from(document.querySelectorAll("button"));
-      const btnEnviar = botones.find(btn => this.cleanText(btn.innerText).toLowerCase().includes("guardar")); 
-      
-      if (btnEnviar) {
-        btnEnviar.click();
-      } else {
-        console.warn("⚠️ Certeza alta, pero no se encontró el botón de enviar para automatizar.");
-      }
-    } else {
-      console.log(`👨‍🏫 [Certeza: ${certeza}%] Derivando al docente para revisión manual.`);
-    }
-
-    return { ok: true };
-  },
-
-  escapeHtml(str = "") {
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return [studentObj];
   }
 };

@@ -1,106 +1,157 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
+import {
+  getClient,
+  getCurrentModelName,
+  rotateModel,
+  getMaxRotationAttempts,
+  fetchAvailableModels
+} from "../clients/gemini-registry.js";
 
-// Asegura que siempre encuentre el archivo .env en la raíz de backend-service
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+function cleanJsonString(raw) {
+  return String(raw || "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
 
-// Modelos reales disponibles en tu cuenta en orden de velocidad y estabilidad
-const FALLBACK_MODELS = [
-  process.env.GEMINI_MODEL || "gemini-2.5-flash",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-flash-lite-latest",
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-  "gemini-flash-latest",
-  "gemini-2.5-pro"
-];
+function isRotatableError(error) {
+  const errStr = String(error?.message || "");
+  const causeCode = String(error?.cause?.code || "");
+  const status = error?.status || error?.statusCode;
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  return (
+    status === 503 ||
+    status === 429 ||
+    status === 404 ||
+    errStr.includes("503") ||
+    errStr.includes("429") ||
+    errStr.includes("404") ||
+    errStr.includes("fetch failed") ||
+    errStr.includes("timeout") ||
+    causeCode.includes("ECONNRESET") ||
+    causeCode.includes("UND_ERR")
+  );
+}
 
-export async function generateFormativeFeedback(promptText) {
-  const modelsToTry = [...new Set(FALLBACK_MODELS)];
+export async function generateFormativeFeedback(inputData) {
+  await fetchAvailableModels();
+
+  const maxAttempts = getMaxRotationAttempts();
   let lastError = null;
 
-  for (const modelName of modelsToTry) {
+  const promptText = typeof inputData === "string" ? inputData : inputData.promptText;
+  const canvasImage = typeof inputData === "object" ? inputData.canvasImage : null;
+
+  const parts = [];
+  if (canvasImage) {
+    const cleanBase64 = String(canvasImage)
+      .replace(/^data:image\/[a-z]+;base64,/, "")
+      .replace(/\s/g, "");
+
+    if (cleanBase64.length > 50) {
+      parts.push({
+        inlineData: {
+          mimeType: "image/png",
+          data: cleanBase64
+        }
+      });
+    }
+  }
+  parts.push({ text: promptText });
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const modelName = getCurrentModelName();
+
     try {
-      const model = genAI.getGenerativeModel({
+      const client = getClient();
+      const model = client.getGenerativeModel({
         model: modelName,
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0.2
+          temperature: 0.0,
+          topP: 1.0
         }
       });
 
-      const result = await model.generateContent(promptText);
+      const result = await model.generateContent(parts);
       const rawText = result.response.text();
 
-      console.log(`Respuesta de evaluacion generada con exito usando el modelo: [${modelName}]`);
+      console.log(`[Gemini Triaje] Evaluación exitosa con [${modelName}].`);
 
       try {
         return JSON.parse(rawText);
       } catch {
-        const cleaned = rawText.replace(/```json|```/g, "").trim();
+        const cleaned = cleanJsonString(rawText);
         return JSON.parse(cleaned);
       }
     } catch (error) {
       lastError = error;
-      console.warn(`Modelo [${modelName}] saturado o no disponible en evaluacion (${error.status || "Error"}). Saltando al siguiente...`);
-      await sleep(400);
-      continue;
+
+      if (isRotatableError(error) && attempt < maxAttempts) {
+        console.warn(`[Gemini Triaje] [${modelName}] falló (${error.message}). Reintentando con siguiente modelo/clave...`);
+        rotateModel();
+        await sleep(1000);
+        continue;
+      }
+
+      throw error;
     }
   }
 
-  throw new Error(`No se pudo obtener respuesta de ningun modelo: ${lastError?.message}`);
+  throw new Error(`Todos los modelos/claves fallaron. Último error: ${lastError?.message}`);
 }
 
-export async function generateChatResponse(systemPrompt, messages) {
-  const modelsToTry = [...new Set(FALLBACK_MODELS)];
+export async function generateChatResponse(systemPrompt, messages = []) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new Error("El arreglo de mensajes no puede estar vacío.");
+  }
+
+  await fetchAvailableModels();
+
+  const maxAttempts = getMaxRotationAttempts();
   let lastError = null;
 
-  // Extraemos el ultimo mensaje enviado por el usuario
-  const lastMessage = messages[messages.length - 1].content;
-  
-  // Transformamos el historial previo al formato que requiere el SDK de Gemini
-  const geminiHistory = messages.slice(0, -1).map(msg => ({
+  const lastMessage = messages[messages.length - 1]?.content || "";
+  const geminiHistory = messages.slice(0, -1).map((msg) => ({
     role: msg.role === "assistant" ? "model" : "user",
-    parts: [{ text: msg.content }]
+    parts: [{ text: msg.content || "" }]
   }));
 
-  for (const modelName of modelsToTry) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const modelName = getCurrentModelName();
+
     try {
-      const model = genAI.getGenerativeModel({
+      const client = getClient();
+      const model = client.getGenerativeModel({
         model: modelName,
         systemInstruction: systemPrompt,
         generationConfig: {
-          temperature: 0.7 // Temperatura ligeramente mas alta para conversacion natural
+          temperature: 0.7,
+          topP: 0.95
         }
       });
 
-      // Iniciamos el chat inyectando el historial y el prompt del sistema
-      const chatSession = model.startChat({
-        history: geminiHistory
-      });
-
+      const chatSession = model.startChat({ history: geminiHistory });
       const result = await chatSession.sendMessage(lastMessage);
       const rawText = result.response.text();
 
-      console.log(`Respuesta de chat generada con exito usando el modelo: [${modelName}]`);
-      
+      console.log(`[Gemini Chat] Respuesta exitosa con [${modelName}].`);
       return rawText;
-      
     } catch (error) {
       lastError = error;
-      console.warn(`Modelo [${modelName}] saturado o no disponible para chat (${error.status || "Error"}). Saltando al siguiente...`);
-      await sleep(400);
-      continue;
+
+      if (isRotatableError(error) && attempt < maxAttempts) {
+        console.warn(`[Gemini Chat] [${modelName}] falló. Reintentando...`);
+        rotateModel();
+        await sleep(1000);
+        continue;
+      }
+
+      throw error;
     }
   }
 
-  throw new Error(`No se pudo obtener respuesta del chat de ningun modelo: ${lastError?.message}`);
+  throw new Error(`Todos los modelos/claves fallaron en el chat. Último error: ${lastError?.message}`);
 }

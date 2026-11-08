@@ -2,41 +2,65 @@ window.ETeacherChat = {
   history: [], 
   isOpen: false,
 
+  ICONS: {
+    messageSquare: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+    sparkles: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path></svg>',
+    close: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
+    send: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>',
+    alert: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>'
+  },
+
+  t(key) {
+    if (window.ETeacherI18n && typeof window.ETeacherI18n.getText === "function") {
+      return window.ETeacherI18n.getText(key);
+    }
+    const fallbacks = {
+      "CHAT_TITLE": "Asistente Pedagógico IA",
+      "CHAT_TYPING": "escribiendo",
+      "CHAT_PLACEHOLDER": "Escribe tu consulta aquí...",
+      "CHAT_SEND": "Enviar"
+    };
+    return fallbacks[key] || key;
+  },
+
+  getLang() {
+    if (window.ETeacherI18n && typeof window.ETeacherI18n.detectLanguage === "function") {
+      return window.ETeacherI18n.detectLanguage();
+    }
+    return "es";
+  },
+
   init() {
     if (document.getElementById("et-chat-wrapper")) return;
 
-    const style = document.createElement("style");
-    style.textContent = `
-      #et-chat-wrapper { position: fixed; top: 0; right: -360px; width: 360px; height: 100vh; background: #fff; box-shadow: -4px 0 15px rgba(0,0,0,0.15); z-index: 999999; transition: right 0.3s ease; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
-      #et-chat-wrapper.et-open { right: 0; }
-      #et-chat-toggle-btn { position: absolute; left: -45px; top: 50%; transform: translateY(-50%); width: 45px; height: 70px; background: #e67e22; color: white; border-radius: 10px 0 0 10px; border: none; cursor: pointer; font-size: 24px; box-shadow: -2px 0 5px rgba(0,0,0,0.1); }
-      #et-chat-header { background: #2c3e50; color: white; padding: 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
-      #et-chat-close-btn { background: none; border: none; color: white; cursor: pointer; font-size: 18px; }
-      #et-chat-messages { flex-grow: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #f9f9f9; }
-      .et-msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
-      .et-msg-ai { background: #fff; border: 1px solid #ddd; align-self: flex-start; border-bottom-left-radius: 2px; }
-      .et-msg-user { background: #e67e22; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
-      #et-chat-typing { font-size: 12px; color: #888; padding: 0 15px 5px; display: none; }
-      #et-chat-input-area { padding: 15px; background: #fff; border-top: 1px solid #ddd; display: flex; gap: 8px; }
-      #et-chat-input { flex-grow: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px; outline: none; }
-      #et-chat-send { background: #e67e22; color: white; border: none; padding: 0 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-    `;
-    document.head.appendChild(style);
-
     const wrapper = document.createElement("div");
     wrapper.id = "et-chat-wrapper";
-    
-    // AQUI INYECTAMOS LOS TEXTOS GLOBALES DEL I18N
-    wrapper.innerHTML = `
-      <button id="et-chat-toggle-btn" title="Chat">🤖</button>
-      <div id="et-chat-header"><span>${window.ETeacherI18n.getText("CHAT_TITLE")}</span><button id="et-chat-close-btn">✖</button></div>
-      <div id="et-chat-messages"></div>
-      <div id="et-chat-typing">IA ${window.ETeacherI18n.getText("CHAT_TYPING")}</div>
-      <div id="et-chat-input-area">
-        <input type="text" id="et-chat-input" placeholder="${window.ETeacherI18n.getText("CHAT_PLACEHOLDER")}" autocomplete="off">
-        <button id="et-chat-send">${window.ETeacherI18n.getText("CHAT_SEND")}</button>
-      </div>
-    `;
+
+    wrapper.innerHTML = [
+      "<button id=\"et-chat-toggle-btn\" title=\"Abrir Asistente IA\">",
+      "  " + this.ICONS.messageSquare,
+      "</button>",
+      "<div id=\"et-chat-header\">",
+      "  <span style=\"display:flex; align-items:center; gap:8px;\">",
+      "    " + this.ICONS.sparkles,
+      "    " + this.t("CHAT_TITLE"),
+      "  </span>",
+      "  <button id=\"et-chat-close-btn\" title=\"Cerrar\">",
+      "    " + this.ICONS.close,
+      "  </button>",
+      "</div>",
+      "<div id=\"et-chat-messages\"></div>",
+      "<div id=\"et-chat-typing\">",
+      "  IA " + this.t("CHAT_TYPING") + " <span class=\"et-typing-dots\"></span>",
+      "</div>",
+      "<div id=\"et-chat-input-area\">",
+      "  <textarea id=\"et-chat-input\" rows=\"1\" placeholder=\"" + this.t("CHAT_PLACEHOLDER") + "\" autocomplete=\"off\"></textarea>",
+      "  <button id=\"et-chat-send\" title=\"" + this.t("CHAT_SEND") + "\">",
+      "    " + this.ICONS.send,
+      "  </button>",
+      "</div>"
+    ].join("\n");
+
     document.body.appendChild(wrapper);
 
     this.bindEvents();
@@ -59,23 +83,57 @@ window.ETeacherChat = {
     toggleBtn.addEventListener("click", toggleChat);
     closeBtn.addEventListener("click", toggleChat);
 
+    const autoResize = () => {
+      inputField.style.height = "auto";
+      const maxHeight = 120;
+      if (inputField.scrollHeight > maxHeight) {
+        inputField.style.height = maxHeight + "px";
+        inputField.style.overflowY = "auto";
+      } else {
+        inputField.style.height = inputField.scrollHeight + "px";
+        inputField.style.overflowY = "hidden";
+      }
+    };
+
+    inputField.addEventListener("input", autoResize);
+
     const handleSend = () => {
       const text = inputField.value.trim();
       if (!text) return;
       this.addMessage("user", text);
       inputField.value = "";
+      inputField.style.height = "auto";
+      inputField.style.overflowY = "hidden";
       this.processAIResponse(text);
     };
 
     sendBtn.addEventListener("click", handleSend);
-    inputField.addEventListener("keypress", (e) => { if (e.key === "Enter") handleSend(); });
+    inputField.addEventListener("keydown", (e) => { 
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    });
   },
 
   addMessage(role, text) {
     const msgDiv = document.createElement("div");
-    msgDiv.className = `et-msg et-msg-${role === "user" ? "user" : "ai"}`;
-    msgDiv.innerHTML = text.replace(/\n/g, "<br>");
-    
+    msgDiv.className = "et-msg et-msg-" + (role === "user" ? "user" : "ai");
+    msgDiv.innerHTML = this.escapeHtml(text).replace(/\n/g, "<br>");
+
+    const container = document.getElementById("et-chat-messages");
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+  },
+
+  addErrorNotice(text) {
+    const msgDiv = document.createElement("div");
+    msgDiv.className = "et-msg et-msg-ai";
+    msgDiv.style.borderColor = "#fecaca";
+    msgDiv.style.background = "#fef2f2";
+    msgDiv.style.color = "#991b1b";
+    msgDiv.innerHTML = this.ICONS.alert + " " + this.escapeHtml(text);
+
     const container = document.getElementById("et-chat-messages");
     container.appendChild(msgDiv);
     container.scrollTop = container.scrollHeight;
@@ -83,26 +141,29 @@ window.ETeacherChat = {
 
   async sendInitialGreeting() {
     document.getElementById("et-chat-typing").style.display = "block";
-    const userLang = window.ETeacherI18n.detectLanguage();
-    
+    const userLang = this.getLang();
+
     setTimeout(() => {
       document.getElementById("et-chat-typing").style.display = "none";
-      let saludo = "¡Hola! Soy tu tutor IA. ¿En qué concepto te puedo ayudar hoy?";
-      if (userLang === "en") saludo = "Hello! I'm your AI tutor. How can I help you today?";
-      if (userLang === "fr") saludo = "Bonjour ! Je suis votre tuteur IA. Comment puis-je vous aider ?";
-      if (userLang === "nl") saludo = "Hallo! Ik ben je AI-tutor. Hoe kan ik je vandaag helpen?";
-      
+      let saludo = "Hola. Soy tu asistente pedagógico. Puedes consultarme dudas conceptuales o pedirme recomendaciones de retroalimentación.";
+      if (userLang === "en") saludo = "Hello. I am your pedagogical assistant. You can ask conceptual questions or request feedback suggestions.";
+      if (userLang === "fr") saludo = "Bonjour. Je suis votre assistant pédagogique. Vous pouvez me poser des questions conceptuelles ou me demander des suggestions de rétroaction.";
+      if (userLang === "nl") saludo = "Hallo. Ik ben je pedagogisch assistent. Je kunt conceptuele vragen stellen of feedbacksuggesties aanvragen.";
+
       this.addMessage("ai", saludo);
-    }, 800);
+    }, 600);
   },
 
   async processAIResponse(userText) {
     document.getElementById("et-chat-typing").style.display = "block";
     this.history.push({ role: "user", content: userText });
 
+    // 1. Iniciar cronómetro de latencia
+    const startTimeMs = Date.now();
+
     try {
-      const userLangCode = window.ETeacherI18n.detectLanguage();
-      
+      const userLangCode = this.getLang();
+
       const response = await fetch("http://localhost:3000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -113,18 +174,46 @@ window.ETeacherChat = {
       });
 
       if (!response.ok) throw new Error("Error en el servidor");
-      
+
       const data = await response.json();
-      const aiText = data.respuesta;
-      
+      const aiText = data.respuesta || "Respuesta sin contenido.";
+
+      // 2. Calcular tiempo total
+      const durationMs = Date.now() - startTimeMs;
+
       document.getElementById("et-chat-typing").style.display = "none";
       this.history.push({ role: "assistant", content: aiText });
       this.addMessage("ai", aiText);
 
+      // 3. TELEMETRÍA: Enviar registro de la interacción de forma asíncrona
+      const currentConceptId = (window.ETeacherUI && window.ETeacherUI.activeExercise) 
+        ? window.ETeacherUI.activeExercise.conceptId 
+        : "general";
+
+      fetch("http://localhost:3000/api/telemetry/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conceptContext: currentConceptId,
+          userMessageLength: userText.length,
+          aiResponseLength: aiText.length,
+          responseDurationMs: durationMs
+        })
+      }).catch(err => console.warn("[eTeacher] Error guardando telemetría de chat:", err));
+
     } catch (error) {
       document.getElementById("et-chat-typing").style.display = "none";
-      this.addMessage("ai", "❌ Error de conexión con el tutor IA.");
+      this.addErrorNotice("Error de conexión con el tutor IA. Verifica que el servidor local esté activo.");
       console.error(error);
     }
+  },
+
+  escapeHtml(str = "") {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 };

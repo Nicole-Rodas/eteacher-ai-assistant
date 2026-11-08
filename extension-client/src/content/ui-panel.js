@@ -1,24 +1,38 @@
 window.ETeacherUI = {
   activeExercise: null,
-  activeTab: "HIGH", // "HIGH" (Certeza Alta) | "LOW" (Baja Certeza / Por Revisar)
+  activeTab: "HIGH",
   rowsData: [],
+  currentAnalysisRunId: 0,
+  isAnalyzing: false,
+
+  currentSessionId: null,
+  sessionStartTime: 0,
+  aiAnalysisDurationMs: 0,
+
+  ICONS: {
+    checkCircle: '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>',
+    alertCircle: '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>',
+    pencil: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>',
+    check: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+    sparkles: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path></svg>',
+    close: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
+  },
 
   LAYER_LABELS: {
-    pregunta_guia: "1. Pregunta guía (Inductiva)",
-    recomendacion_estructural: "2. Recomendación estructural",
-    raiz_del_error: "3. Explicación raíz del error",
+    correctiva: "1. Retroalimentación Correctiva",
+    socratica: "2. Pregunta Socrática (Reflexiva)",
+    motivacional: "3. Mensaje Motivacional",
     completa: "Todas las capas combinadas"
   },
 
   init() {
     this.createModalContainer();
-    this.scanExercises();
   },
 
   scanExercises() {
-    window.ETeacherDOM.injectExerciseButtons((exerciseInfo) => {
-      this.openAssistantForExercise(exerciseInfo);
-    });
+    if (window.ETeacherDOM && window.ETeacherDOM.injectExerciseButtons) {
+      window.ETeacherDOM.injectExerciseButtons();
+    }
   },
 
   createModalContainer() {
@@ -26,64 +40,64 @@ window.ETeacherUI = {
 
     const modal = document.createElement("div");
     modal.id = "et-triage-modal";
-    modal.style.display = "none";
-    modal.innerHTML = `
-      <div class="et-modal-card">
-        <!-- Cabecera del Panel -->
-        <div class="et-modal-header">
-          <div>
-            <span class="et-modal-badge" id="et-modal-chapter">Capítulo detectado</span>
-            <h3 class="et-modal-title" id="et-modal-title">Ejercicio</h3>
-            <p class="et-modal-subtitle" id="et-modal-statement"></p>
-          </div>
-          <button class="et-close-x" id="et-close-x" title="Cerrar">✕</button>
-        </div>
-
-        <!-- Barra de Pestañas -->
-        <div class="et-tabs-bar">
-          <button class="et-tab-btn active" id="et-tab-high">
-            🟢 Certeza Alta <span class="et-count-pill" id="et-count-high">0</span>
-          </button>
-          <button class="et-tab-btn" id="et-tab-low">
-            🟠 Baja Certeza / Por Revisar <span class="et-count-pill" id="et-count-low">0</span>
-          </button>
-          <button class="et-reanalyze-btn" id="et-reanalyze-btn">
-             Analizar Entregas con IA
-          </button>
-        </div>
-
-        <div id="et-status-banner" class="et-status-banner" style="display:none;"></div>
-
-        <!-- Tabla de Entregas -->
-        <div class="et-table-wrapper">
-          <table class="et-table">
-            <thead>
-              <tr>
-                <th style="width:40px;"><input type="checkbox" id="et-check-all" checked /></th>
-                <th style="width:45px;">N°</th>
-                <th style="width:170px;">Correo</th>
-                <th style="width:160px;">Nombre</th>
-                <th style="width:115px;">Nota</th>
-                <th>Sugerencia Formativa (Selector de Capa + Edición)</th>
-              </tr>
-            </thead>
-            <tbody id="et-table-body"></tbody>
-          </table>
-        </div>
-
-        <!-- Botones Inferiores: Aceptar, Borrar, Cancelar -->
-        <div class="et-modal-footer">
-          <span class="et-footer-hint" id="et-footer-hint">
-             Elige el tipo de respuesta en el menú y usa el lápiz (✏️) si deseas editar el texto o la nota.
-          </span>
-          <div class="et-footer-actions">
-            <button class="et-btn et-btn-cancel" id="et-btn-cancel">Cancelar</button>
-            <button class="et-btn et-btn-delete" id="et-btn-clear">Borrar</button>
-            <button class="et-btn et-btn-accept" id="et-btn-accept">Aceptar</button>
-          </div>
-        </div>
-      </div>
-    `;
+    modal.style.setProperty("display", "none", "important");
+    modal.innerHTML = [
+      "<div class=\"et-modal-card\">",
+      "  <div class=\"et-modal-header\">",
+      "    <div>",
+      "      <span class=\"et-modal-badge\" id=\"et-modal-chapter\">Capítulo detectado</span>",
+      "      <h3 class=\"et-modal-title\" id=\"et-modal-title\">Ejercicio</h3>",
+      "      <p class=\"et-modal-subtitle\" id=\"et-modal-statement\"></p>",
+      "    </div>",
+      "    <button class=\"et-close-x\" id=\"et-close-x\" title=\"Cerrar\">" + this.ICONS.close + "</button>",
+      "  </div>",
+      "  <div class=\"et-tabs-bar\">",
+      "    <button class=\"et-tab-btn active\" id=\"et-tab-high\">",
+      "      " + this.ICONS.checkCircle + " Certeza Alta <span class=\"et-count-pill\" id=\"et-count-high\">0</span>",
+      "    </button>",
+      "    <button class=\"et-tab-btn\" id=\"et-tab-low\">",
+      "      " + this.ICONS.alertCircle + " Baja Certeza / Por Revisar <span class=\"et-count-pill\" id=\"et-count-low\">0</span>",
+      "    </button>",
+      "    <button class=\"et-reanalyze-btn\" id=\"et-reanalyze-btn\">",
+      "      " + this.ICONS.sparkles + " Analizar Entregas con IA",
+      "    </button>",
+      "  </div>",
+      "  <div id=\"et-progress-wrapper\" class=\"et-progress-wrapper\">",
+      "    <div class=\"et-progress-info\">",
+      "      <span id=\"et-progress-label\">Analizando entregas con IA...</span>",
+      "      <span id=\"et-progress-percent\">0% (0/0)</span>",
+      "    </div>",
+      "    <div class=\"et-progress-track\">",
+      "      <div id=\"et-progress-fill\" class=\"et-progress-fill\"></div>",
+      "    </div>",
+      "  </div>",
+      "  <div id=\"et-status-banner\" class=\"et-status-banner\" style=\"display:none;\"></div>",
+      "  <div class=\"et-table-wrapper\">",
+      "    <table class=\"et-table\">",
+      "      <thead>",
+      "        <tr>",
+      "          <th style=\"width:38px;\"><input type=\"checkbox\" id=\"et-check-all\" checked /></th>",
+      "          <th style=\"width:42px;\">N°</th>",
+      "          <th style=\"width:200px;\">Nombre</th>",
+      "          <th style=\"width:110px;\">Nota</th>",
+      "          <th>Sugerencia Formativa (Selector de Capa + Edición)</th>",
+      "        </tr>",
+      "      </thead>",
+      "      <tbody id=\"et-table-body\"></tbody>",
+      "    </table>",
+      "  </div>",
+      "  <div class=\"et-modal-footer\">",
+      "    <span class=\"et-footer-hint\" id=\"et-footer-hint\">",
+      "      Elige el tipo de respuesta en el menú desplegable y edita los campos si es necesario.",
+      "    </span>",
+      "    <div class=\"et-footer-actions\">",
+      "      <button class=\"et-btn et-btn-cancel\" id=\"et-btn-cancel\">Cancelar</button>",
+      "      <button class=\"et-btn et-btn-delete\" id=\"et-btn-clear\">Borrar</button>",
+      "      <button class=\"et-btn et-btn-accept\" id=\"et-btn-accept\">Inyectar en Editor Actual</button>",
+      "    </div>",
+      "  </div>",
+      "</div>"
+    ].join("\n");
 
     document.body.appendChild(modal);
     this.bindModalEvents();
@@ -106,7 +120,10 @@ window.ETeacherUI = {
     });
 
     document.getElementById("et-reanalyze-btn").addEventListener("click", () => {
-      this.analyzeAllSubmissions();
+      if (window.ETeacherStorage) {
+        window.ETeacherStorage.clearExercise(this.activeExercise);
+      }
+      this.analyzeAllSubmissions({ forceAll: true });
     });
 
     document.getElementById("et-check-all").addEventListener("change", (e) => {
@@ -115,7 +132,6 @@ window.ETeacherUI = {
       this.renderTable();
     });
 
-    // Botón BORRAR: Limpia la sugerencia activa y la nota de las filas seleccionadas
     document.getElementById("et-btn-clear").addEventListener("click", () => {
       const selected = this.getFilteredRows().filter(r => r.selected);
       if (selected.length === 0) {
@@ -127,158 +143,272 @@ window.ETeacherUI = {
         r.layers[r.selectedLayer] = "";
         r.wasEdited = true;
       });
+      if (window.ETeacherStorage) {
+        window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
+      }
       this.renderTable();
-      this.showBanner("Se limpió el contenido seleccionado. Puedes escribir desde cero con el lápiz (✏️).", false);
+      this.showBanner("Se limpió el contenido seleccionado.", false);
     });
 
-    // Botón ACEPTAR: Inyecta la capa seleccionada (y editada) en ProseMirror y guarda telemetría
     document.getElementById("et-btn-accept").addEventListener("click", async () => {
       const selected = this.getFilteredRows().filter(r => r.selected);
       if (selected.length === 0) {
-        this.showBanner("Selecciona al menos una fila para aceptar.", true);
+        this.showBanner("Selecciona la fila del alumno que deseas inyectar.", true);
+        return;
+      }
+      if (selected.length > 1) {
+        this.showBanner("Selecciona solo un alumno a la vez para inyectar en el editor actual.", true);
         return;
       }
 
-      const firstRow = selected[0];
-      const activeText = firstRow.layers[firstRow.selectedLayer] || "";
+      const row = selected[0];
+      const inputNombre = document.querySelector(".thaw-combobox__input");
+      const currentNameOnScreen = inputNombre ? (window.ETeacherDOM?.cleanText(inputNombre.value) || inputNombre.value.trim()) : "";
 
-      const res = await window.ETeacherDOM.injectFeedbackIntoProseMirror(
-        this.activeExercise?.exerciseBlock,
-        {
-          customText: activeText,
-          calificacion: firstRow.nota
-        }
-      );
+      if (currentNameOnScreen && currentNameOnScreen.toLowerCase() !== row.nombre.toLowerCase()) {
+        this.showBanner("El editor actual pertenece a \"" + currentNameOnScreen + "\". Selecciona a \"" + row.nombre + "\" en Programino primero.", true);
+        return;
+      }
 
-      // Registrar en el backend
-      selected.forEach(row => {
-        const finalSentText = row.layers[row.selectedLayer] || "";
-        const origLayerText = row.originalLayers[row.selectedLayer] || "";
-        const wasEdited =
-          row.wasEdited ||
-          finalSentText.trim() !== origLayerText.trim() ||
-          Number(row.nota) !== Number(row.originalNota);
+      const activeText = row.layers[row.selectedLayer] || "";
+      
+      const injectFn = window.ETeacherEditor?.injectFeedbackIntoProseMirror || window.ETeacherDOM?.injectFeedbackIntoProseMirror;
+      if (!injectFn) {
+        this.showBanner("Error: Módulo de inyección no cargado.", true);
+        return;
+      }
 
-        chrome.runtime.sendMessage({
-          action: "SAVE_FEEDBACK_LOG",
-          payload: {
-            unitTitle: this.activeExercise?.unitTitle,
-            conceptId: this.activeExercise?.conceptId,
-            certaintyLevel: row.certaintyLevel,
-            certaintyScore: row.certaintyScore,
-            aiSuggestedGrade: row.originalNota,
-            teacherFinalGrade: row.nota,
-            aiDraftFeedback: `[${row.selectedLayer}] ${origLayerText}`,
-            teacherFinalFeedback: `[${row.selectedLayer}] ${finalSentText}`,
-            wasEditedByTeacher: wasEdited,
-            reviewTimeSeconds: 15
-          }
-        });
+      const res = await injectFn.call(window.ETeacherEditor || window.ETeacherDOM, document, {
+        customText: activeText,
+        calificacion: row.nota,
+        certeza: row.certaintyScore
       });
 
       if (res.ok) {
-        this.showBanner(`Se aceptaron ${selected.length} evaluación(es) y se inyectó en el editor ProseMirror.`, false);
+        this.showBanner("Inyectado correctamente a " + row.nombre + ".", false);
+        row.selected = false;
+        this.renderTable();
+
+        if (this.currentSessionId && window.ETeacherTelemetry) {
+          window.ETeacherTelemetry.logInjection({
+            sessionId: this.currentSessionId,
+            certaintyLevel: row.certaintyLevel,
+            certaintyScore: row.certaintyScore,
+            selectedLayer: row.selectedLayer,
+            wasEdited: Boolean(row.wasEdited),
+            gradeChanged: row.nota !== row.originalNota,
+            aiSuggestedGrade: row.originalNota,
+            finalGrade: row.nota
+          });
+        }
       } else {
-        this.showBanner(`Evaluaciones guardadas. (${res.error})`, false);
+        this.showBanner("Error al inyectar: " + res.error, true);
       }
     });
   },
 
-  openAssistantForExercise(exerciseInfo) {
-    this.activeExercise = exerciseInfo;
-    document.getElementById("et-modal-chapter").textContent = `Capítulo ${exerciseInfo.chapterNum} (${exerciseInfo.conceptId})`;
-    document.getElementById("et-modal-title").textContent = exerciseInfo.unitTitle;
-    document.getElementById("et-modal-statement").textContent = exerciseInfo.problemStatement;
+  openAssistantForBatch(exerciseInfo, batchData) {
+    this.activeExercise = exerciseInfo || {};
+    this.currentAnalysisRunId++;
+    this.isAnalyzing = false;
 
-    document.getElementById("et-triage-modal").style.display = "flex";
+    this.currentSessionId = (typeof crypto !== "undefined" && crypto.randomUUID) 
+      ? crypto.randomUUID() 
+      : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
+      (+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16)
+    );
+    this.sessionStartTime = Date.now();
+    this.aiAnalysisDurationMs = 0;
 
-    const rawSubmissions = window.ETeacherDOM.extractSubmissionsForExercise(exerciseInfo);
-    this.rowsData = rawSubmissions.map(sub => ({
-      ...sub,
-      selected: true,
-      certaintyLevel: "PENDIENTE",
-      certaintyScore: 0,
-      justificacion: "Analizando...",
-      nota: 0,
-      originalNota: 0,
-      selectedLayer: "pregunta_guia", // Por defecto muestra la 1ra capa (o el docente la cambia en el menú)
-      layers: {
-        pregunta_guia: "",
-        recomendacion_estructural: "",
-        raiz_del_error: "",
-        completa: ""
-      },
-      originalLayers: {
-        pregunta_guia: "",
-        recomendacion_estructural: "",
-        raiz_del_error: "",
-        completa: ""
-      },
-      isEditingGrade: false,
-      isEditingSuggestion: false,
-      wasEdited: false
-    }));
+    document.getElementById("et-modal-chapter").textContent = "Capítulo " + (this.activeExercise.chapterNum || "-") + " (" + (this.activeExercise.conceptId || "general") + ")";
+    document.getElementById("et-modal-title").textContent = this.activeExercise.unitTitle || "Evaluación de Clase";
+    document.getElementById("et-modal-statement").textContent = this.activeExercise.problemStatement || "";
 
-    this.analyzeAllSubmissions();
-  },
+    // 1. Validar si existe sesión en sessionStorage
+    const cached = window.ETeacherStorage ? window.ETeacherStorage.getExerciseRows(this.activeExercise) : null;
+    
+    // Solo reutilizar si el caché coincide con la consigna actual y no quedó guardado el fallback
+    const isCacheValid = cached && 
+                         Array.isArray(cached) && 
+                         cached.length > 0 && 
+                         cached[0].problemStatement === this.activeExercise.problemStatement;
 
-  closeModal() {
-    document.getElementById("et-triage-modal").style.display = "none";
-  },
+    if (isCacheValid) {
+      this.rowsData = cached;
+    } else {
+      this.rowsData = (batchData || []).map((sub, idx) => ({
+        ...sub,
+        numero: sub.numero || (idx + 1),
+        selected: true,
+        certaintyLevel: "PENDIENTE",
+        certaintyScore: 0,
+        justificacion: "Pendiente de análisis...",
+        nota: 0,
+        originalNota: 0,
+        selectedLayer: "correctiva",
+        problemStatement: this.activeExercise.problemStatement || "",
+        layers: {
+          correctiva: "",
+          socratica: "",
+          motivacional: "",
+          completa: ""
+        },
+        originalLayers: {
+          correctiva: "",
+          socratica: "",
+          motivacional: "",
+          completa: ""
+        },
+        isEditingGrade: false,
+        isEditingSuggestion: false,
+        wasEdited: false
+      }));
 
-  async analyzeAllSubmissions() {
-    const btn = document.getElementById("et-reanalyze-btn");
-    btn.disabled = true;
-    btn.textContent = "Analizando con Gemini...";
-    this.showBanner("Evaluando entregas del ejercicio y generando las 3 capas formativas...", false);
-
-    for (const row of this.rowsData) {
-      const response = await new Promise(resolve => {
-        chrome.runtime.sendMessage(
-          {
-            action: "ANALYZE_SUBMISSION",
-            payload: {
-              unitTitle: this.activeExercise.unitTitle,
-              problemStatement: this.activeExercise.problemStatement,
-              studentCode: row.studentCode,
-              conceptId: this.activeExercise.conceptId
-            }
-          },
-          res => resolve(res)
-        );
-      });
-
-      if (response && response.ok && response.data) {
-        const d = response.data;
-        row.certaintyLevel = (d.certeza?.nivel || "MEDIA").toUpperCase();
-        row.certaintyScore = d.certeza?.porcentaje ?? 70;
-        row.justificacion = d.certeza?.justificacion_docente || "";
-        row.nota = d.calificacion_sugerida ?? 0;
-        row.originalNota = row.nota;
-
-        const q = d.retroalimentacion?.pregunta_guia || "";
-        const r = d.retroalimentacion?.recomendacion_estructural || "";
-        const e = d.retroalimentacion?.raiz_del_error || "";
-        const all = `Pregunta guía: ${q}\n Recomendación: ${r}\n Raíz del error: ${e}`;
-
-        row.layers = {
-          pregunta_guia: q,
-          recomendacion_estructural: r,
-          raiz_del_error: e,
-          completa: all
-        };
-
-        row.originalLayers = { ...row.layers };
-      } else {
-        row.certaintyLevel = "BAJA";
-        row.certaintyScore = 20;
-        row.justificacion = response?.error || "Sin conexión con el Backend.";
+      if (window.ETeacherStorage) {
+        window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
       }
     }
 
-    btn.disabled = false;
-    btn.textContent = "Re-analizar con IA";
-    document.getElementById("et-status-banner").style.display = "none";
+    const modal = document.getElementById("et-triage-modal");
+    if (modal) {
+      modal.style.setProperty("display", "flex", "important");
+    }
+
+    this.updateTabsUI();
+    this.renderTable();
+
+    const hasPending = this.rowsData.some(r => r.certaintyLevel === "PENDIENTE");
+    if (hasPending) {
+      this.analyzeAllSubmissions({ forceAll: false });
+    }
+  },
+
+  closeModal() {
+    const modal = document.getElementById("et-triage-modal");
+    if (modal && modal.style.display !== "none") {
+      modal.style.setProperty("display", "none", "important");
+
+      this.currentAnalysisRunId++;
+      this.isAnalyzing = false;
+
+      if (this.sessionStartTime > 0 && this.rowsData.length > 0 && window.ETeacherTelemetry) {
+        const totalSessionMs = Date.now() - this.sessionStartTime;
+        const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
+        const lowCount = this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE").length;
+
+        window.ETeacherTelemetry.logSession({
+          id: this.currentSessionId,
+          unitTitle: this.activeExercise?.unitTitle,
+          conceptId: this.activeExercise?.conceptId,
+          totalStudents: this.rowsData.length,
+          highCertaintyCount: highCount,
+          lowCertaintyCount: lowCount,
+          aiAnalysisDurationMs: this.aiAnalysisDurationMs,
+          totalSessionDurationMs: totalSessionMs
+        });
+
+        this.sessionStartTime = 0;
+      }
+    }
+  },
+
+  updateProgressUI(completed, total, currentStudentName = "") {
+    const wrapper = document.getElementById("et-progress-wrapper");
+    const label = document.getElementById("et-progress-label");
+    const percentEl = document.getElementById("et-progress-percent");
+    const fill = document.getElementById("et-progress-fill");
+    if (!wrapper || !fill) return;
+
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    wrapper.style.display = "block";
+    label.textContent = currentStudentName
+      ? "Analizando entrega de: " + currentStudentName + "..."
+      : "Analizando entregas con IA...";
+    percentEl.textContent = pct + "% (" + completed + "/" + total + ")";
+    fill.style.width = pct + "%";
+  },
+
+  syncRowProgress(total, studentName) {
+    if (window.ETeacherStorage) {
+      window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
+    }
+    const completed = this.rowsData.filter(r => r.certaintyLevel !== "PENDIENTE").length;
+    this.updateProgressUI(completed, total, studentName);
+    this.updateTabsUI();
+    this.renderTable();
+  },
+
+  async analyzeAllSubmissions(options = { forceAll: false }) {
+    const runId = ++this.currentAnalysisRunId;
+    this.isAnalyzing = true;
+
+    const btn = document.getElementById("et-reanalyze-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = this.ICONS.sparkles + " Analizando con IA...";
+    }
+    this.showBanner("Evaluando entregas de los estudiantes en tiempo real...", false);
+
+    if (options && options.forceAll) {
+      this.rowsData.forEach(r => { r.certaintyLevel = "PENDIENTE"; });
+      this.updateTabsUI();
+      this.renderTable();
+    }
+
+    const total = this.rowsData.length;
+    const aiStartTime = Date.now();
+
+    for (const row of this.rowsData) {
+      if (runId !== this.currentAnalysisRunId) {
+        this.isAnalyzing = false;
+        return;
+      }
+
+      if (!options?.forceAll && row.certaintyLevel !== "PENDIENTE") {
+        continue;
+      }
+
+      const result = await window.ETeacherClient.evaluateSubmission({
+        exerciseInfo: this.activeExercise,
+        rawCode: row.studentCode,
+        canvasImage: row.canvasImage
+      });
+
+      if (runId !== this.currentAnalysisRunId) {
+        this.isAnalyzing = false;
+        return;
+      }
+
+      row.certaintyLevel = result.certaintyLevel;
+      row.certaintyScore = result.certaintyScore;
+      row.justificacion = result.justificacion;
+      row.nota = result.nota;
+      row.originalNota = result.nota;
+      row.layers = result.layers;
+      row.originalLayers = { ...result.layers };
+
+      this.syncRowProgress(total, row.nombre);
+    }
+
+    this.aiAnalysisDurationMs += (Date.now() - aiStartTime);
+    this.isAnalyzing = false;
+
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = this.ICONS.sparkles + " Re-analizar con IA";
+    }
+    const banner = document.getElementById("et-status-banner");
+    if (banner) banner.style.display = "none";
+
+    setTimeout(() => {
+      const prog = document.getElementById("et-progress-wrapper");
+      if (prog) prog.style.display = "none";
+    }, 800);
+
+    const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
+    if (highCount === 0 && this.rowsData.length > 0) {
+      this.activeTab = "LOW";
+    }
 
     this.updateTabsUI();
     this.renderTable();
@@ -288,12 +418,12 @@ window.ETeacherUI = {
     if (this.activeTab === "HIGH") {
       return this.rowsData.filter(r => r.certaintyLevel === "ALTA");
     }
-    return this.rowsData.filter(r => r.certaintyLevel !== "ALTA");
+    return this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE");
   },
 
   updateTabsUI() {
     const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
-    const lowCount = this.rowsData.filter(r => r.certaintyLevel !== "ALTA").length;
+    const lowCount = this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE").length;
 
     document.getElementById("et-count-high").textContent = highCount;
     document.getElementById("et-count-low").textContent = lowCount;
@@ -303,8 +433,8 @@ window.ETeacherUI = {
 
     const hint = document.getElementById("et-footer-hint");
     hint.textContent = this.activeTab === "LOW"
-      ? "Haz clic en el correo/nombre para saltar al editor en la página, o elige una capa y edítala con el lápiz (✏️)."
-      : "Selecciona entre las 3 capas formativas en el menú desplegable y usa el lápiz (✏️) para personalizar el texto.";
+      ? "Revisa las entregas con certeza baja, entregas en blanco o respuestas muy cortas."
+      : "Selecciona la capa pedagógica que prefieras o edita el texto.";
   },
 
   renderTable() {
@@ -313,101 +443,80 @@ window.ETeacherUI = {
     const rows = this.getFilteredRows();
 
     if (rows.length === 0) {
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="6" class="et-empty-row">
-            No hay entregas registradas en esta pestaña.
-          </td>
-        </tr>
-      `;
+      tbody.innerHTML = "<tr><td colspan=\"5\" class=\"et-empty-row\">No hay entregas en esta pestaña.</td></tr>";
       return;
     }
+
+    const escapeFn = window.ETeacherEditor?.escapeHtml || window.ETeacherDOM?.escapeHtml || ((s) => String(s));
 
     rows.forEach((row) => {
       const tr = document.createElement("tr");
       const currentText = row.layers[row.selectedLayer] || "";
 
       const formattedText = currentText.trim()
-        ? window.ETeacherDOM.escapeHtml(currentText).replace(/\n/g, "<br>")
-        : `<em style="color:#64748b;">Sin texto en esta capa (Haz clic en ✏️ para escribir)</em>`;
+        ? escapeFn(currentText).replace(/\n/g, "<br>")
+        : "<em style=\"color:#64748b;\">Sin texto en esta capa</em>";
 
       const selectOptionsHtml = Object.entries(this.LAYER_LABELS)
-        .map(([key, label]) => `<option value="${key}" ${row.selectedLayer === key ? "selected" : ""}>${label}</option>`)
+        .map(([key, label]) => "<option value=\"" + key + "\" " + (row.selectedLayer === key ? "selected" : "") + ">" + label + "</option>")
         .join("");
 
-      tr.innerHTML = `
-        <td>
-          <input type="checkbox" class="et-row-check" ${row.selected ? "checked" : ""} />
-        </td>
-        <td><strong>${row.numero}</strong></td>
-        <td class="et-cell-jump" title="Clic para ir al editor en la página">${row.correo}</td>
-        <td class="et-cell-jump" title="Clic para ir al editor en la página">
-          <strong>${row.nombre}</strong>
-          ${this.activeTab === "LOW" ? `<span class="et-jump-link">↗ Ir al editor</span>` : ""}
-        </td>
-        <td>
-          <div class="et-grade-cell">
-            ${row.isEditingGrade
-              ? `<input type="number" class="et-inline-grade" value="${row.nota}" min="0" max="100" />`
-              : `<span class="et-grade-val">${row.nota}/100</span>`
-            }
-            <button type="button" class="et-pencil-btn et-edit-grade-btn" title="${row.isEditingGrade ? "Confirmar nota" : "Editar nota"}">
-              ${row.isEditingGrade ? "✔️" : "✏️"}
-            </button>
-          </div>
-        </td>
-        <td>
-          <div class="et-sug-wrapper">
-            <!-- Barra superior de la celda: Menú selector de las 3 respuestas + Botón Lápiz -->
-            <div class="et-sug-toolbar">
-              <select class="et-layer-select" title="Seleccionar tipo de respuesta formativa">
-                ${selectOptionsHtml}
-              </select>
-              <button type="button" class="et-pencil-btn et-edit-sug-btn" title="${row.isEditingSuggestion ? "Confirmar edición" : "Editar o escribir texto"}">
-                ${row.isEditingSuggestion ? "✔️ Listo" : "✏️ Editar"}
-              </button>
-            </div>
+      const cleanPreview = window.ETeacherClient?.cleanStudentAnswer ? window.ETeacherClient.cleanStudentAnswer(row.studentCode) : row.studentCode;
+      const answerSnippet = cleanPreview
+        ? "<div style=\"font-size:11px; color:#475569; padding:4px 8px; background:#f1f5f9; border-left:3px solid #e67e22; border-radius:4px; margin-bottom:4px;\"><strong>Respuesta del alumno:</strong> " + escapeFn(cleanPreview) + "</div>"
+        : (row.canvasImage ? "<div style=\"font-size:11px; color:#475569; padding:4px 8px; background:#f1f5f9; border-left:3px solid #2980b9; border-radius:4px; margin-bottom:4px;\"><strong>Respuesta del alumno:</strong> [Diagrama Gráfico Detectado]</div>" : "");
 
-            <!-- Contenido de la respuesta seleccionada (Lectura o Textarea editable) -->
-            <div class="et-sug-content">
-              ${row.isEditingSuggestion
-                ? `<textarea class="et-inline-ta" rows="3" placeholder="Escribe o modifica aquí la retroalimentación...">${currentText}</textarea>`
-                : `<div class="et-sug-line">${formattedText}</div>`
-              }
-              <div class="et-cert-mini">
-                Certeza: <strong>${row.certaintyLevel} (${row.certaintyScore}%)</strong> — ${row.justificacion}
-                ${row.wasEdited ? `<span style="color:#fb923c; margin-left:6px;">• Editado</span>` : ""}
-              </div>
-            </div>
-          </div>
-        </td>
-      `;
+      tr.innerHTML = [
+        "<td><input type=\"checkbox\" class=\"et-row-check\" " + (row.selected ? "checked" : "") + " /></td>",
+        "<td><strong>" + row.numero + "</strong></td>",
+        "<td><strong>" + escapeFn(row.nombre) + "</strong></td>",
+        "<td>",
+        "  <div class=\"et-grade-cell\">",
+        row.isEditingGrade
+          ? "    <input type=\"number\" class=\"et-inline-grade\" value=\"" + row.nota + "\" min=\"0\" max=\"100\" />"
+          : "    <span class=\"et-grade-val\">" + row.nota + "/100</span>",
+        "    <button type=\"button\" class=\"et-pencil-btn et-edit-grade-btn\">",
+        row.isEditingGrade ? this.ICONS.check : this.ICONS.pencil,
+        "    </button>",
+        "  </div>",
+        "</td>",
+        "<td>",
+        "  <div class=\"et-sug-wrapper\">",
+        answerSnippet,
+        "    <div class=\"et-sug-toolbar\">",
+        "      <select class=\"et-layer-select\">" + selectOptionsHtml + "</select>",
+        "      <button type=\"button\" class=\"et-pencil-btn et-edit-sug-btn\">",
+        row.isEditingSuggestion ? this.ICONS.check + " Listo" : this.ICONS.pencil + " Editar",
+        "      </button>",
+        "    </div>",
+        row.isEditingSuggestion
+          ? "    <textarea class=\"et-inline-ta\" rows=\"3\">" + escapeFn(currentText) + "</textarea>"
+          : "    <div class=\"et-sug-line\">" + formattedText + "</div>",
+        "    <div class=\"et-cert-mini\">",
+        "      Certeza: <strong>" + row.certaintyLevel + " (" + row.certaintyScore + "%)</strong> — " + escapeFn(row.justificacion || ""),
+        row.wasEdited ? "<span style=\"color:#e67e22; margin-left:6px; font-weight:600;\">• Editado</span>" : "",
+        "    </div>",
+        "  </div>",
+        "</td>"
+      ].join("\n");
 
-      // 1. Checkbox de fila
       tr.querySelector(".et-row-check").addEventListener("change", (e) => {
         row.selected = e.target.checked;
       });
 
-      // 2. Clic en correo o nombre -> Saltar al editor en la página
-      tr.querySelectorAll(".et-cell-jump").forEach(cell => {
-        cell.addEventListener("click", () => {
-          this.closeModal();
-          window.ETeacherDOM.scrollToEditor(row.editorNode);
-        });
-      });
-
-      // 3. Selector de las 3 Capas Pedagógicas
       tr.querySelector(".et-layer-select").addEventListener("change", (e) => {
         row.selectedLayer = e.target.value;
         this.renderTable();
       });
 
-      // 4. Edición de NOTA en tiempo real
       const gradeInput = tr.querySelector(".et-inline-grade");
       if (gradeInput) {
         gradeInput.addEventListener("input", (e) => {
           row.nota = Number(e.target.value);
           row.wasEdited = true;
+          if (window.ETeacherStorage) {
+            window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
+          }
         });
         gradeInput.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
@@ -417,41 +526,27 @@ window.ETeacherUI = {
         });
       }
 
-      // Botón Lápiz de NOTA
       tr.querySelector(".et-edit-grade-btn").addEventListener("click", (e) => {
         e.stopPropagation();
         row.isEditingGrade = !row.isEditingGrade;
         this.renderTable();
-        if (row.isEditingGrade) {
-          const newInput = tbody.querySelectorAll("tr")[rows.indexOf(row)]?.querySelector(".et-inline-grade");
-          if (newInput) {
-            newInput.focus();
-            newInput.select();
-          }
-        }
       });
 
-      // 5. Edición de SUGERENCIA en tiempo real sobre la capa activa
       const sugTextarea = tr.querySelector(".et-inline-ta");
       if (sugTextarea) {
         sugTextarea.addEventListener("input", (e) => {
           row.layers[row.selectedLayer] = e.target.value;
           row.wasEdited = true;
+          if (window.ETeacherStorage) {
+            window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
+          }
         });
       }
 
-      // Botón Lápiz de SUGERENCIA
       tr.querySelector(".et-edit-sug-btn").addEventListener("click", (e) => {
         e.stopPropagation();
         row.isEditingSuggestion = !row.isEditingSuggestion;
         this.renderTable();
-        if (row.isEditingSuggestion) {
-          const newTa = tbody.querySelectorAll("tr")[rows.indexOf(row)]?.querySelector(".et-inline-ta");
-          if (newTa) {
-            newTa.focus();
-            newTa.setSelectionRange(newTa.value.length, newTa.value.length);
-          }
-        }
       });
 
       tbody.appendChild(tr);

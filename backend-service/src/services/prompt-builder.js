@@ -1,80 +1,97 @@
-export function buildEvaluationPrompt({ unitTitle, problemStatement, studentCode, concept, maxScore = 100 }) {
+/**
+ * Constructor de Prompts Pedagógicos para eTeacher AI
+ * Basado en la taxonomía didáctica: Correctiva, Socrática y Motivacional.
+ */
+
+export function buildEvaluationPrompt({
+  unitTitle,
+  problemStatement,
+  studentCode,
+  concept,
+  maxScore = 100,
+  targetLang = "es",
+  hasCanvas = false
+}) {
+  const isVisualDiagram = hasCanvas || String(studentCode || "").includes("[DIAGRAMA_EN_CANVAS]");
+
+  const deliveryContext = isVisualDiagram
+    ? `MODALIDAD DE ENTREGA: Diagrama Gráfico / Visual (Adjunto en Imagen)
+Nota: El estudiante planteó su solución en un lienzo canvas. Debes inspeccionar visualmente la imagen: nodos, relaciones, flechas, condiciones de control o flujo dibujado.`
+    : `MODALIDAD DE ENTREGA: Código / Texto Estructurado
+RESPUESTA DEL ESTUDIANTE:
+"""
+${studentCode || "[SIN ENTREGA REGISTRADA]"}
+"""`;
+
+  const rubricClarity = isVisualDiagram
+    ? `- "ALTA" (80 a 100): El diagrama visual es legible, los componentes lógicos son identificables y los aciertos/errores de diseño son claros.
+- "MEDIA" (50 a 79): El diagrama es ambiguo, le faltan etiquetas/flechas o requiere interpretación subjetiva del docente.
+- "BAJA" (0 a 49): El lienzo está vacío, no se distingue estructura lógica o el trazo es ininteligible.`
+    : `- "ALTA" (80 a 100): El código o texto es legible y el error o acierto lógico es evidente sin ambigüedad.
+- "MEDIA" (50 a 79): La lógica es inusual, incompleta o requiere necesariamente revisión humana.
+- "BAJA" (0 a 49): La respuesta es sumamente ambigua, vacía o con contenido fuera de contexto.`;
+
   return `
 Eres un asistente pedagógico experto en enseñanza de Introducción a la Programación y Pensamiento Computacional.
-Tu objetivo es generar un borrador de retroalimentación formativa para el docente bajo el paradigma Human-in-the-Loop.
+Tu objetivo es generar un borrador de retroalimentación formativa estructurada para el docente bajo el paradigma Human-in-the-Loop.
 
-REGLA ESTRICTA 1: NUNCA escribas ni regales el código resuelto al estudiante. Tu función es guiar su razonamiento.
-REGLA ESTRICTA 2 (IDIOMA): Detecta automáticamente el idioma en el que está escrito el "ENUNCIADO DEL PROBLEMA" y la "Unidad / Tema". Debes redactar TODO el texto de tu respuesta (especialmente la retroalimentación) ESTRICTAMENTE en ese mismo idioma (ej. si el enunciado está en inglés, responde en inglés).
+REGLAS PEDAGÓGICAS ESTRICTAS:
+1. NUNCA resuelvas ni regales el código resuelto al estudiante. Tu función es orientar su razonamiento cognitivo.
+2. Todo el contenido generado DEBE redactarse rigurosamente en el idioma correspondiente a este código: "${targetLang}".
+3. Ignora errores ortográficos o sintaxis informal; evalúa la comprensión algorítmica y estructural de fondo.
 
-=== CONTEXTO CURRICULAR DETECTADO ===
-- Unidad / Tema en plataforma: "
-${unitTitle || "No especificado"}"
-- Concepto Pedagógico Aplicado: "
-${concept.title}"
-- Criterio de Evaluación Específico: 
-${concept.pedagogicalFocus}
-- Criterio de Calibración de Certeza: 
-${concept.uncertaintyCriteria}
+=== CONTEXTO CURRICULAR ===
+- Unidad / Tema: "${unitTitle || "No especificado"}"
+- Concepto Aplicado: "${concept?.title || "Concepto Principal"}"
+- Enfoque Pedagógico: ${concept?.pedagogicalFocus || "Fomento de razonamiento paso a paso."}
+- Criterio de Certeza: ${concept?.uncertaintyCriteria || "Evaluar consistencia con la consigna."}
 
 === DATOS DEL EJERCICIO ===
 ENUNCIADO DEL PROBLEMA:
 """
-${problemStatement || "Analizar la lógica general de la respuesta del estudiante."}
+${problemStatement || "Analizar la lógica y consistencia de la solución presentada."}
 """
 
-RESPUESTA / CÓDIGO DEL ESTUDIANTE:
-"""
-${studentCode}
-"""
+${deliveryContext}
 
-=== RÚBRICA PARA CALCULAR LA CALIFICACIÓN SUGERIDA (Escala de 0 a ${maxScore}) ===
-- 90% a 100% de 
-${maxScore}: La lógica resuelve el problema correctamente y aplica bien el concepto "${concept.title}".
-- 60% a 89% de 
-${maxScore}: El planteamiento va bien encaminado pero tiene errores lógicos menores, casos límite no cubiertos o fallos en condiciones/contadores.
-- 20% a 59% de 
-${maxScore}: Intento incompleto o con errores conceptuales graves respecto a "${concept.title}", aunque se distingue qué intentó hacer.
-- 0% a 19% de 
-${maxScore}: Respuesta sin sentido, texto irrelevante o código que no guarda relación con el enunciado.
+=== RÚBRICA PARA LA CALIFICACIÓN SUGERIDA (0 a ${maxScore}) ===
+- 90% a 100%: La lógica resuelve el problema correctamente y aplica el concepto sin fisuras.
+- 60% a 89%: Planteamiento bien encaminado pero con errores lógicos menores, casos límite sin cubrir o fallos sintácticos leves.
+- 20% a 59%: Intento incompleto o con errores conceptuales graves, aunque se distingue la intención estructural.
+- 0% a 19%: Respuesta incomprensible, irrelevante o sin relación estructural con el problema pedido.
 
-=== RÚBRICA PARA CALCULAR EL NIVEL DE CERTEZA ===
-- "ALTA" (80 a 100): El código es legible y el acierto o error lógico es totalmente evidente según el criterio de "
-${concept.title}".
-- "MEDIA" (50 a 79): El estudiante usa una lógica inusual/ambigua, o el enunciado no tiene suficiente contexto para estar 100% seguro.
-- "BAJA" (0 a 49): El texto enviado por el estudiante es confuso, está truncado, es irrelevante o no parece código/pseudocódigo evaluable.
+=== RÚBRICA ESTRICTA PARA EL NIVEL DE CERTEZA ===
+${rubricClarity}
 
 === INSTRUCCIONES DE SALIDA ===
-Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta (reemplaza los tipos indicados por tus cálculos reales, y mantén las llaves del JSON en español, pero el CONTENIDO en el idioma detectado):
+Devuelve ÚNICAMENTE un objeto JSON válido. Las llaves deben mantenerse idénticas a la especificación, con sus valores redactados en "${targetLang}":
 
 {
-  "concepto_aplicado": "${concept.title}",
+  "concepto_aplicado": "${concept?.title || "Concepto Principal"}",
   "certeza": {
-    "nivel": "ALTA o MEDIA o BAJA",
-    "porcentaje": <número entero calculado entre 0 y 100>,
-    "justificacion_docente": "<explicación breve de 1 línea en el IDIOMA DETECTADO sobre por qué asignaste ese nivel>"
+    "nivel": "ALTA",
+    "porcentaje": 85,
+    "justificacion_docente": "<explicación breve de 1 línea sobre el nivel asignado>"
   },
-  "calificacion_sugerida": <número entero calculado entre 0 y ${maxScore}>,
+  "calificacion_sugerida": 75,
   "retroalimentacion": {
-    "pregunta_guia": "<pregunta reflexiva e inductiva en el IDIOMA DETECTADO que lleve al estudiante a descubrir su error o mejora>",
-    "recomendacion_estructural": "<sugerencia en el IDIOMA DETECTADO sobre cómo organizar mejor su lógica sin darle el código hecho>",
-    "raiz_del_error": "<explicación conceptual en el IDIOMA DETECTADO de la raíz del fallo o validación de su lógica>"
+    "correctiva": "<identifica aciertos o fallos conceptuales específicos y orienta cómo subsanarlos sin dar la solución directa>",
+    "socratica": "<formula preguntas abiertas y reflexivas que induzcan al estudiante a razonar sobre el funcionamiento de su solución>",
+    "motivacional": "<refuerzo positivo y asertivo que reconozca el esfuerzo y anime al estudiante a continuar perfeccionando su lógica>"
   }
 }
 `.trim();
 }
 
-// ============================================================================
-// NUEVO: PROMPT PARA EL CHAT DE CONCEPTOS (MULTILINGÜE)
-// ============================================================================
-export function buildChatSystemPrompt(userLangCode) {
+export function buildChatSystemPrompt(userLangCode = "es") {
   return `
-Eres un tutor de programación amable y experto. 
-Tu objetivo es explicar definiciones, conceptos lógicos y sintaxis de manera clara y usando analogías simples.
+Eres un tutor de programación empático, claro y pedagógico. 
+Tu objetivo es explicar definiciones, lógica computacional y sintaxis mediante analogías simples y orientación paso a paso.
 
 REGLAS ESTRICTAS:
-1. NUNCA resuelvas un ejercicio completo ni escribas el código final por el estudiante.
-2. Si te piden resolver un problema, explica la lógica, pero que ellos escriban el código.
-3. Sé muy breve y conciso (1 a 3 párrafos como máximo).
-4. ESTRICTAMENTE responde en el idioma correspondiente a este código ISO local: '${userLangCode}'.
+1. NUNCA resuelvas un ejercicio completo ni entregues el bloque de código final.
+2. Si te piden resolver un problema, explica la estructura conceptual o el algoritmo y guía al estudiante para que sea él quien escriba la implementación.
+3. Sé conciso y directo (1 a 3 párrafos como máximo).
+4. Tolera cualquier falta de ortografía o redacción informal del usuario. Responde SIEMPRE y ÚNICAMENTE en el idioma correspondiente a este código ISO: "${userLangCode}".
 `.trim();
 }
