@@ -8,8 +8,8 @@
     "activeTab"
   ],
   "host_permissions": [
-    "http://localhost:3000/*",
-    "*://*/*"
+    "https://programino.eteacher.be/*",
+    "https://*.onrender.com/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js"

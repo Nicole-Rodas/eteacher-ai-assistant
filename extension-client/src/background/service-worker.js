@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://localhost:3000/api/evaluation";
+const BACKEND_URL = "https://eteacher-backend.onrender.com/api/evaluation";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "ANALYZE_SUBMISSION") {
