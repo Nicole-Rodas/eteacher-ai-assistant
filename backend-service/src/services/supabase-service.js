@@ -1,15 +1,19 @@
 import { supabase } from "../config/supabase.js";
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ============================================================================
 // 1. REGISTRAR SESIÓN DE TRIAJE (Lote de estudiantes analizados)
 // ============================================================================
 export async function logTriageSession(data = {}) {
   if (!supabase) {
-    console.log("[Modo Local] Simulando guardado de Triage Session:", data);
-    return { id: `local-session-${Date.now()}` };
+    console.warn("[Telemetry] Cliente Supabase no inicializado.");
+    throw new Error("Cliente de base de datos no configurado.");
   }
 
   const {
+    id,
+    sessionId,
     teacherId = "docente-local",
     unitTitle,
     conceptId,
@@ -20,34 +24,35 @@ export async function logTriageSession(data = {}) {
     totalSessionDurationMs
   } = data;
 
-  try {
-    const { data: inserted, error } = await supabase
-      .from("triage_sessions")
-      .insert([
-        {
-          teacher_id: teacherId,
-          unit_title: unitTitle || "Sin título",
-          concept_id: conceptId || "general",
-          total_students: Number(totalStudents) || 0,
-          high_certainty_count: Number(highCertaintyCount) || 0,
-          low_certainty_count: Number(lowCertaintyCount) || 0,
-          ai_analysis_duration_ms: Math.round(aiAnalysisDurationMs || 0),
-          total_session_duration_ms: Math.round(totalSessionDurationMs || 0)
-        }
-      ])
-      .select("id")
-      .single();
+  const targetId = id || sessionId;
+  const sessionRow = {
+    teacher_id: teacherId || "docente-local",
+    unit_title: unitTitle || "Sin título",
+    concept_id: conceptId || "general",
+    total_students: Number(totalStudents) || 0,
+    high_certainty_count: Number(highCertaintyCount) || 0,
+    low_certainty_count: Number(lowCertaintyCount) || 0,
+    ai_analysis_duration_ms: Math.round(Number(aiAnalysisDurationMs) || 0),
+    total_session_duration_ms: Math.round(Number(totalSessionDurationMs) || 0)
+  };
 
-    if (error) {
-      console.warn(`[Supabase] Advertencia al insertar triage_session: ${error.message}`);
-      return { id: `fallback-session-${Date.now()}`, error: error.message };
-    }
-
-    return inserted;
-  } catch (err) {
-    console.warn(`[Supabase] Fallo de conexión en logTriageSession: ${err.message}`);
-    return { id: `fallback-session-${Date.now()}`, error: err.message };
+  // Si el frontend envía un UUID explícito, lo conservamos como clave primaria
+  if (targetId && UUID_REGEX.test(targetId)) {
+    sessionRow.id = targetId;
   }
+
+  const { data: inserted, error } = await supabase
+    .from("triage_sessions")
+    .insert([sessionRow])
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error(`[Supabase Error] Fallo al insertar triage_session: ${error.message} (Código: ${error.code})`);
+    throw new Error(`Error en triage_sessions: ${error.message}`);
+  }
+
+  return inserted;
 }
 
 // ============================================================================
@@ -55,8 +60,8 @@ export async function logTriageSession(data = {}) {
 // ============================================================================
 export async function logFeedbackInjection(data = {}) {
   if (!supabase) {
-    console.log("[Modo Local] Simulando guardado de Feedback Injection:", data);
-    return { id: `local-injection-${Date.now()}` };
+    console.warn("[Telemetry] Cliente Supabase no inicializado.");
+    throw new Error("Cliente de base de datos no configurado.");
   }
 
   const {
@@ -70,34 +75,39 @@ export async function logFeedbackInjection(data = {}) {
     finalGrade
   } = data;
 
-  try {
-    const { data: inserted, error } = await supabase
-      .from("feedback_injections")
-      .insert([
-        {
-          session_id: sessionId,
-          certainty_level: certaintyLevel,
-          certainty_score: Math.min(100, Math.max(0, Number(certaintyScore) || 0)),
-          selected_layer: selectedLayer,
-          was_edited: Boolean(wasEdited),
-          grade_changed: Boolean(gradeChanged),
-          ai_suggested_grade: Math.min(100, Math.max(0, Number(aiSuggestedGrade) || 0)),
-          final_grade: Math.min(100, Math.max(0, Number(finalGrade) || 0))
-        }
-      ])
-      .select("id")
-      .single();
-
-    if (error) {
-      console.warn(`[Supabase] Advertencia al insertar feedback_injection: ${error.message}`);
-      return { id: `fallback-injection-${Date.now()}`, error: error.message };
-    }
-
-    return inserted;
-  } catch (err) {
-    console.warn(`[Supabase] Fallo de conexión en logFeedbackInjection: ${err.message}`);
-    return { id: `fallback-injection-${Date.now()}`, error: err.message };
+  // session_id en Supabase es tipo UUID vinculado a triage_sessions
+  if (!sessionId || !UUID_REGEX.test(sessionId)) {
+    console.error(`[Supabase Error] sessionId inválido o ausente: "${sessionId}". Debe ser un UUID registrado.`);
+    throw new Error(`sessionId inválido o ausente (${sessionId}).`);
   }
+
+  const injectionRow = {
+    session_id: sessionId,
+    certainty_level: certaintyLevel || "MEDIA",
+    certainty_score: Math.min(100, Math.max(0, Number(certaintyScore) || 0)),
+    selected_layer: selectedLayer || "correctiva",
+    was_edited: Boolean(wasEdited),
+    grade_changed: Boolean(gradeChanged),
+    ai_suggested_grade: aiSuggestedGrade !== null && aiSuggestedGrade !== undefined && !isNaN(aiSuggestedGrade)
+      ? Math.min(100, Math.max(0, Math.round(Number(aiSuggestedGrade))))
+      : null,
+    final_grade: finalGrade !== null && finalGrade !== undefined && !isNaN(finalGrade)
+      ? Math.min(100, Math.max(0, Math.round(Number(finalGrade))))
+      : null
+  };
+
+  const { data: inserted, error } = await supabase
+    .from("feedback_injections")
+    .insert([injectionRow])
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error(`[Supabase Error] Fallo al insertar feedback_injection: ${error.message} (Código: ${error.code})`);
+    throw new Error(`Error en feedback_injections: ${error.message}`);
+  }
+
+  return inserted;
 }
 
 // ============================================================================
@@ -105,8 +115,8 @@ export async function logFeedbackInjection(data = {}) {
 // ============================================================================
 export async function logChatInteraction(data = {}) {
   if (!supabase) {
-    console.log("[Modo Local] Simulando guardado de Chat Interaction:", data);
-    return { id: `local-chat-${Date.now()}` };
+    console.warn("[Telemetry] Cliente Supabase no inicializado.");
+    throw new Error("Cliente de base de datos no configurado.");
   }
 
   const {
@@ -117,29 +127,24 @@ export async function logChatInteraction(data = {}) {
     responseDurationMs = 0
   } = data;
 
-  try {
-    const { data: inserted, error } = await supabase
-      .from("chat_interactions")
-      .insert([
-        {
-          teacher_id: teacherId,
-          concept_context: conceptContext,
-          user_message_length: Number(userMessageLength) || 0,
-          ai_response_length: Number(aiResponseLength) || 0,
-          response_duration_ms: Math.round(responseDurationMs || 0)
-        }
-      ])
-      .select("id")
-      .single();
+  const chatRow = {
+    teacher_id: teacherId || "docente-local",
+    concept_context: conceptContext || "general",
+    user_message_length: Number(userMessageLength) || 0,
+    ai_response_length: Number(aiResponseLength) || 0,
+    response_duration_ms: Math.round(Number(responseDurationMs) || 0)
+  };
 
-    if (error) {
-      console.warn(`[Supabase] Advertencia al insertar chat_interaction: ${error.message}`);
-      return { id: `fallback-chat-${Date.now()}`, error: error.message };
-    }
+  const { data: inserted, error } = await supabase
+    .from("chat_interactions")
+    .insert([chatRow])
+    .select("id")
+    .single();
 
-    return inserted;
-  } catch (err) {
-    console.warn(`[Supabase] Fallo de conexión en logChatInteraction: ${err.message}`);
-    return { id: `fallback-chat-${Date.now()}`, error: err.message };
+  if (error) {
+    console.error(`[Supabase Error] Fallo al insertar chat_interaction: ${error.message} (Código: ${error.code})`);
+    throw new Error(`Error en chat_interactions: ${error.message}`);
   }
+
+  return inserted;
 }
