@@ -150,59 +150,93 @@ window.ETeacherUI = {
       this.showBanner("Se limpió el contenido seleccionado.", false);
     });
 
+    // INYECCIÓN AUTOMATIZADA DIRECTA A TOAST UI (1 alumno o lote completo)
     document.getElementById("et-btn-accept").addEventListener("click", async () => {
       const selected = this.getFilteredRows().filter(r => r.selected);
       if (selected.length === 0) {
-        this.showBanner("Selecciona la fila del alumno que deseas inyectar.", true);
-        return;
-      }
-      if (selected.length > 1) {
-        this.showBanner("Selecciona solo un alumno a la vez para inyectar en el editor actual.", true);
+        this.showBanner("Selecciona al menos un estudiante para inyectar.", true);
         return;
       }
 
-      const row = selected[0];
-      const inputNombre = document.querySelector(".thaw-combobox__input");
-      const currentNameOnScreen = inputNombre ? (window.ETeacherDOM?.cleanText(inputNombre.value) || inputNombre.value.trim()) : "";
+      const btnAccept = document.getElementById("et-btn-accept");
+      const originalText = btnAccept.innerText;
+      const triageModal = document.getElementById("et-triage-modal");
 
-      if (currentNameOnScreen && currentNameOnScreen.toLowerCase() !== row.nombre.toLowerCase()) {
-        this.showBanner("El editor actual pertenece a \"" + currentNameOnScreen + "\". Selecciona a \"" + row.nombre + "\" en Programino primero.", true);
-        return;
-      }
+      try {
+        btnAccept.disabled = true;
 
-      const activeText = row.layers[row.selectedLayer] || "";
-      
-      const injectFn = window.ETeacherEditor?.injectFeedbackIntoProseMirror || window.ETeacherDOM?.injectFeedbackIntoProseMirror;
-      if (!injectFn) {
-        this.showBanner("Error: Módulo de inyección no cargado.", true);
-        return;
-      }
-
-      const res = await injectFn.call(window.ETeacherEditor || window.ETeacherDOM, document, {
-        customText: activeText,
-        calificacion: row.nota,
-        certeza: row.certaintyScore
-      });
-
-      if (res.ok) {
-        this.showBanner("Inyectado correctamente a " + row.nombre + ".", false);
-        row.selected = false;
-        this.renderTable();
-
-        if (this.currentSessionId && window.ETeacherTelemetry) {
-          window.ETeacherTelemetry.logInjection({
-            sessionId: this.currentSessionId,
-            certaintyLevel: row.certaintyLevel,
-            certaintyScore: row.certaintyScore,
-            selectedLayer: row.selectedLayer,
-            wasEdited: Boolean(row.wasEdited),
-            gradeChanged: row.nota !== row.originalNota,
-            aiSuggestedGrade: row.originalNota,
-            finalGrade: row.nota
-          });
+        // Atenuar modal durante la inyección para que no bloquee el foco del editor de Programino
+        if (triageModal) {
+          triageModal.style.opacity = "0.15";
+          triageModal.style.pointerEvents = "none";
         }
-      } else {
-        this.showBanner("Error al inyectar: " + res.error, true);
+
+        let successCount = 0;
+
+        for (let i = 0; i < selected.length; i++) {
+          const row = selected[i];
+          btnAccept.innerText = `Inyectando (${i + 1}/${selected.length}): ${row.nombre.split(" ")[0]}...`;
+
+          // 1. Cambiar al estudiante en el combobox de Programino
+          if (window.ETeacherDOM?.selectStudentInCombobox) {
+            await window.ETeacherDOM.selectStudentInCombobox(row.nombre);
+          }
+
+          const activeText = row.layers[row.selectedLayer] || "";
+
+          // 2. Llamar directamente al método nuevo de ETeacherDOM (con await)
+          let injectedOk = false;
+          if (window.ETeacherDOM?.injectFeedbackAndGrade) {
+            injectedOk = await window.ETeacherDOM.injectFeedbackAndGrade(activeText, row.nota);
+          }
+
+          if (injectedOk) {
+            row.selected = false;
+            successCount++;
+
+            // 3. Registrar telemetría por cada estudiante inyectado
+            if (this.currentSessionId && window.ETeacherTelemetry) {
+              window.ETeacherTelemetry.logInjection({
+                sessionId: this.currentSessionId,
+                certaintyLevel: row.certaintyLevel,
+                certaintyScore: row.certaintyScore,
+                selectedLayer: row.selectedLayer,
+                wasEdited: Boolean(row.wasEdited),
+                gradeChanged: row.nota !== row.originalNota,
+                aiSuggestedGrade: row.originalNota,
+                finalGrade: row.nota
+              });
+            }
+          }
+
+          // Pausa entre estudiantes para que Programino procese el guardado
+          if (selected.length > 1) {
+            await new Promise(res => setTimeout(res, 450));
+          }
+        }
+
+        if (window.ETeacherStorage) {
+          window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
+        }
+
+        this.renderTable();
+        this.showBanner(
+          successCount > 0
+            ? `¡Se inyectaron y guardaron ${successCount} de ${selected.length} evaluaciones!`
+            : "No se pudo encontrar o abrir el editor en Programino.",
+          successCount === 0
+        );
+
+      } catch (err) {
+        console.error("Error durante la inyección en lote:", err);
+        this.showBanner("Error en el proceso de inyección: " + (err.message || err), true);
+      } finally {
+        if (triageModal) {
+          triageModal.style.opacity = "1";
+          triageModal.style.pointerEvents = "auto";
+        }
+        btnAccept.innerText = originalText;
+        btnAccept.disabled = false;
       }
     });
   },

@@ -168,7 +168,6 @@ window.ETeacherDOM = {
   extractStatementFromBlock(block, headerText) {
     const currentTitle = (headerText || "").toLowerCase().trim();
 
-    // 1. Encontrar el contenedor de la sección en la página que coincide con el título
     let matchedSection = null;
     const allSections = Array.from(document.querySelectorAll(".section-item, .content-item"));
 
@@ -176,18 +175,15 @@ window.ETeacherDOM = {
       const titleEl = section.querySelector(".section-item-header, h1, h2, h3, .title");
       const secTitle = titleEl ? this.cleanText(titleEl.innerText).toLowerCase() : "";
       
-      // Coincidencia exacta o cruzada del título del ejercicio
       if (currentTitle && secTitle && (secTitle.includes(currentTitle) || currentTitle.includes(secTitle))) {
         matchedSection = section;
         break;
       }
     }
 
-    // 2. Definir el ámbito de búsqueda: priorizar la sección coincidente, luego el bloque pasado
     const scope = matchedSection || block || document.querySelector(".submission_modal_content");
 
     if (scope) {
-      // A) Si esta sección específica tiene un blockquote (ej. preguntas de opción múltiple / definiciones)
       const bq = scope.querySelector("blockquote");
       if (bq) {
         const bqText = this.cleanText(bq.innerText || "");
@@ -201,7 +197,6 @@ window.ETeacherDOM = {
         }
       }
 
-      // B) Si no tiene blockquote, extraer los párrafos de su propio contenedor markdown
       const md = scope.querySelector(".section-item-content span.markdown, span.markdown, .markdown");
       if (md) {
         const txt = this.cleanText(md.innerText || "");
@@ -210,7 +205,6 @@ window.ETeacherDOM = {
         }
       }
 
-      // C) Párrafos directos de la consigna dentro de la sección
       const paragraphs = Array.from(scope.querySelectorAll("p, .statement, .description"))
         .map(p => this.cleanText(p.innerText || ""))
         .filter(t => t.length > 15 &&
@@ -223,7 +217,6 @@ window.ETeacherDOM = {
       }
     }
 
-    // 3. Fallback
     return headerText || "Analizar el ejercicio entregado.";
   },
 
@@ -473,5 +466,186 @@ window.ETeacherDOM = {
     }
 
     return [studentObj];
+  },
+
+  // ------------------------------------------------------------------------
+  // MÉTODOS DE AUTOMATIZACIÓN E INYECCIÓN SECUENCIAL EN PROGRAMINO
+  // ------------------------------------------------------------------------
+
+  getCurrentActiveStudentName() {
+    const inputNombre = document.querySelector(".thaw-combobox__input");
+    return inputNombre ? this.cleanText(inputNombre.value) : "";
+  },
+
+  async selectStudentInCombobox(targetStudentName, maxWaitMs = 3500) {
+    const input = document.querySelector(".thaw-combobox__input");
+    if (!input) return false;
+
+    const current = this.cleanText(input.value).toLowerCase();
+    const target = this.cleanText(targetStudentName).toLowerCase();
+    if (current && (current.includes(target) || target.includes(current))) {
+      return true;
+    }
+
+    // 1. Abrir menú desplegable
+    input.focus();
+    input.click();
+    input.dispatchEvent(new Event("focus", { bubbles: true }));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    await new Promise(r => setTimeout(r, 200));
+
+    // 2. Buscar opciones del combobox
+    const options = Array.from(document.querySelectorAll(
+      ".thaw-combobox-list__option, .thaw-select-option, [role='option'], .thaw-combobox__menu-item"
+    ));
+
+    const matchedOption = options.find(opt => {
+      const optText = this.cleanText(opt.innerText || opt.textContent).toLowerCase();
+      return optText.includes(target) || target.includes(optText);
+    });
+
+    if (matchedOption) {
+      matchedOption.click();
+    } else {
+      const nextBtn = document.querySelector(".submission_modal_next");
+      if (nextBtn && !nextBtn.disabled) {
+        const prev = this.getCurrentActiveStudentName();
+        nextBtn.click();
+        await this.waitForStudentChange(prev, 1500);
+      }
+    }
+
+    // 3. Confirmar cambio en el combobox
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      const activeName = this.getCurrentActiveStudentName().toLowerCase();
+      if (activeName && (activeName.includes(target) || target.includes(activeName))) {
+        await new Promise(r => setTimeout(r, 250));
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    return false;
+  },
+
+  async injectFeedbackAndGrade(feedbackText, grade = null) {
+    // 1. Abrir el editor nativo de Programino (ignora cualquier botón de la extensión)
+    let tuiContainer = document.querySelector("leptos-tui-instance");
+
+    if (!tuiContainer) {
+      const openBtn = Array.from(document.querySelectorAll("button.thaw-button, button"))
+        .find(b => !b.className.includes("et-") && (b.innerText.trim() === "Editar" || b.innerText.includes("Añadir comentarios")));
+
+      if (openBtn) {
+        openBtn.click();
+      } else {
+        console.warn("[eTeacher] No se localizó el botón de edición nativo de Programino.");
+        return false;
+      }
+    }
+
+    // 2. Esperar el montaje reactivo de Leptos y los contenedores ProseMirror
+    let proses = [];
+    const startWait = Date.now();
+
+    while (Date.now() - startWait < 4000) {
+      tuiContainer = document.querySelector("leptos-tui-instance");
+      if (tuiContainer) {
+        proses = Array.from(tuiContainer.querySelectorAll(".ProseMirror"));
+        if (proses.length > 0) break;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    if (proses.length === 0) {
+      console.warn("[eTeacher] Timeout esperando el montaje del editor Toast UI.");
+      return false;
+    }
+
+    // 3. Inyectar la nota en el input numérico
+    if (grade !== null && grade !== undefined) {
+      const gradeInput = document.querySelector("input.range-input, input[type='number']");
+      if (gradeInput) {
+        gradeInput.focus();
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+        if (nativeSetter) {
+          nativeSetter.call(gradeInput, String(grade));
+        } else {
+          gradeInput.value = String(grade);
+        }
+        gradeInput.dispatchEvent(new Event("input", { bubbles: true }));
+        gradeInput.dispatchEvent(new Event("change", { bubbles: true }));
+        gradeInput.dispatchEvent(new Event("blur", { bubbles: true }));
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 150));
+
+    // 4. Inyectar el texto en todos los contenedores ProseMirror y sincronizar el textarea interno
+    const formattedHtml = feedbackText
+      .split("\n")
+      .map(line => `<p>${line || "<br>"}</p>`)
+      .join("");
+
+    proses.forEach(p => {
+      p.focus();
+      p.innerHTML = formattedHtml;
+      p.dispatchEvent(new Event("input", { bubbles: true }));
+      p.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const internalTextarea = tuiContainer.querySelector("textarea");
+    if (internalTextarea) {
+      internalTextarea.value = feedbackText;
+      internalTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+      internalTextarea.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    await new Promise(r => setTimeout(r, 250));
+
+    // 5. Presionar el botón Guardar nativo de Programino
+    const btnGuardar = Array.from(document.querySelectorAll("button.thaw-button, button"))
+      .find(b => !b.className.includes("et-") && b.innerText.trim() === "Guardar");
+
+    if (btnGuardar && !btnGuardar.disabled) {
+      btnGuardar.click();
+      // Margen para que el backend de Programino procese y desmonte el editor
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    return true;
+  },
+
+  async injectAllBatchSequentially(evaluationsList, onProgress = null) {
+    const total = evaluationsList.length;
+    let inyectados = 0;
+
+    for (let i = 0; i < total; i++) {
+      const item = evaluationsList[i];
+      if (onProgress) {
+        onProgress({ current: i + 1, total, studentName: item.nombre });
+      }
+
+      // 1. Cambiar al estudiante en el combobox de Programino
+      const switched = await this.selectStudentInCombobox(item.nombre);
+      if (!switched) {
+        console.warn(`[eTeacher] No se pudo cambiar automáticamente a ${item.nombre}`);
+      }
+
+      // 2. Extraer el texto de la capa pedagógica seleccionada
+      const textToInject = item.selectedText || item.layers?.correctiva || item.justificacion || "";
+      const gradeToInject = item.nota !== undefined ? item.nota : null;
+
+      // 3. Escribir en el editor y guardar
+      await this.injectFeedbackAndGrade(textToInject, gradeToInject);
+      inyectados++;
+
+      // Pausa para estabilización entre envíos
+      await new Promise(res => setTimeout(res, 500));
+    }
+
+    return inyectados;
   }
 };

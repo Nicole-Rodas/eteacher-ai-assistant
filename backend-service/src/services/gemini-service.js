@@ -17,7 +17,7 @@ function cleanJsonString(raw) {
 }
 
 function isRotatableError(error) {
-  const errStr = String(error?.message || "");
+  const errStr = String(error?.message || "").toLowerCase();
   const causeCode = String(error?.cause?.code || "");
   const status = error?.status || error?.statusCode;
 
@@ -25,9 +25,13 @@ function isRotatableError(error) {
     status === 503 ||
     status === 429 ||
     status === 404 ||
+    // Capturar error 400 cuando el modelo seleccionado no soporta visión/imágenes
+    status === 400 && (errStr.includes("image") || errStr.includes("modality") || errStr.includes("not enabled")) ||
     errStr.includes("503") ||
     errStr.includes("429") ||
     errStr.includes("404") ||
+    errStr.includes("image input modality is not enabled") ||
+    errStr.includes("unsupported modality") ||
     errStr.includes("fetch failed") ||
     errStr.includes("timeout") ||
     causeCode.includes("ECONNRESET") ||
@@ -44,8 +48,15 @@ export async function generateFormativeFeedback(inputData) {
   const promptText = typeof inputData === "string" ? inputData : inputData.promptText;
   const canvasImage = typeof inputData === "object" ? inputData.canvasImage : null;
 
+  const hasImage = Boolean(
+    canvasImage &&
+    typeof canvasImage === "string" &&
+    canvasImage.trim().length > 50 &&
+    canvasImage !== "[DIAGRAMA_EN_CANVAS]"
+  );
+
   const parts = [];
-  if (canvasImage) {
+  if (hasImage) {
     const cleanBase64 = String(canvasImage)
       .replace(/^data:image\/[a-z]+;base64,/, "")
       .replace(/\s/g, "");
@@ -62,7 +73,15 @@ export async function generateFormativeFeedback(inputData) {
   parts.push({ text: promptText });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const modelName = getCurrentModelName();
+    let modelName = getCurrentModelName();
+
+    // Si la entrega incluye canvas y el modelo actual es puramente textual o de transcripción,
+    // rotar proactivamente a un modelo con soporte de visión
+    if (hasImage && (modelName.includes("transcribe") || modelName.includes("embedding") || modelName.includes("text-"))) {
+      console.warn(`[Gemini Triaje] El modelo [${modelName}] no soporta visión. Rotando modelo...`);
+      rotateModel();
+      modelName = getCurrentModelName();
+    }
 
     try {
       const client = getClient();
@@ -90,7 +109,7 @@ export async function generateFormativeFeedback(inputData) {
       lastError = error;
 
       if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Triaje] [${modelName}] falló (${error.message}). Reintentando con siguiente modelo/clave...`);
+        console.warn(`[Gemini Triaje] [${modelName}] falló (${error.message}). Rotando al siguiente modelo/clave...`);
         rotateModel();
         await sleep(1000);
         continue;
