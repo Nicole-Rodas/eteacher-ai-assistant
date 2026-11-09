@@ -22,7 +22,7 @@ window.ETeacherUI = {
     correctiva: "1. Retroalimentación Correctiva",
     socratica: "2. Pregunta Socrática (Reflexiva)",
     motivacional: "3. Mensaje Motivacional",
-    completa: "Todas las capas combinadas"
+    todas: "Todas las capas combinadas"
   },
 
   init() {
@@ -165,7 +165,6 @@ window.ETeacherUI = {
       try {
         btnAccept.disabled = true;
 
-        // Atenuar modal durante la inyección para que no bloquee el foco del editor de Programino
         if (triageModal) {
           triageModal.style.opacity = "0.15";
           triageModal.style.pointerEvents = "none";
@@ -177,14 +176,12 @@ window.ETeacherUI = {
           const row = selected[i];
           btnAccept.innerText = `Inyectando (${i + 1}/${selected.length}): ${row.nombre.split(" ")[0]}...`;
 
-          // 1. Cambiar al estudiante en el combobox de Programino
           if (window.ETeacherDOM?.selectStudentInCombobox) {
             await window.ETeacherDOM.selectStudentInCombobox(row.nombre);
           }
 
           const activeText = row.layers[row.selectedLayer] || "";
 
-          // 2. Llamar directamente al método nuevo de ETeacherDOM (con await)
           let injectedOk = false;
           if (window.ETeacherDOM?.injectFeedbackAndGrade) {
             injectedOk = await window.ETeacherDOM.injectFeedbackAndGrade(activeText, row.nota);
@@ -194,13 +191,15 @@ window.ETeacherUI = {
             row.selected = false;
             successCount++;
 
-            // 3. Registrar telemetría por cada estudiante inyectado
+            // Mapeo seguro a los valores de la base de datos
+            const layerToSend = row.selectedLayer === "completa" ? "todas" : row.selectedLayer;
+
             if (this.currentSessionId && window.ETeacherTelemetry) {
               window.ETeacherTelemetry.logInjection({
                 sessionId: this.currentSessionId,
                 certaintyLevel: row.certaintyLevel,
                 certaintyScore: row.certaintyScore,
-                selectedLayer: row.selectedLayer,
+                selectedLayer: layerToSend,
                 wasEdited: Boolean(row.wasEdited),
                 gradeChanged: row.nota !== row.originalNota,
                 aiSuggestedGrade: row.originalNota,
@@ -209,7 +208,6 @@ window.ETeacherUI = {
             }
           }
 
-          // Pausa entre estudiantes para que Programino procese el guardado
           if (selected.length > 1) {
             await new Promise(res => setTimeout(res, 450));
           }
@@ -246,11 +244,12 @@ window.ETeacherUI = {
     this.currentAnalysisRunId++;
     this.isAnalyzing = false;
 
+    // Generar UUID de sesión de inmediato
     this.currentSessionId = (typeof crypto !== "undefined" && crypto.randomUUID) 
       ? crypto.randomUUID() 
       : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
-      (+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16)
-    );
+        (+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16)
+      );
     this.sessionStartTime = Date.now();
     this.aiAnalysisDurationMs = 0;
 
@@ -258,10 +257,7 @@ window.ETeacherUI = {
     document.getElementById("et-modal-title").textContent = this.activeExercise.unitTitle || "Evaluación de Clase";
     document.getElementById("et-modal-statement").textContent = this.activeExercise.problemStatement || "";
 
-    // 1. Validar si existe sesión en sessionStorage
     const cached = window.ETeacherStorage ? window.ETeacherStorage.getExerciseRows(this.activeExercise) : null;
-    
-    // Solo reutilizar si el caché coincide con la consigna actual y no quedó guardado el fallback
     const isCacheValid = cached && 
                          Array.isArray(cached) && 
                          cached.length > 0 && 
@@ -285,13 +281,13 @@ window.ETeacherUI = {
           correctiva: "",
           socratica: "",
           motivacional: "",
-          completa: ""
+          todas: ""
         },
         originalLayers: {
           correctiva: "",
           socratica: "",
           motivacional: "",
-          completa: ""
+          todas: ""
         },
         isEditingGrade: false,
         isEditingSuggestion: false,
@@ -301,6 +297,24 @@ window.ETeacherUI = {
       if (window.ETeacherStorage) {
         window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
       }
+    }
+
+    // REGISTRO INMEDIATO DE LA SESIÓN: asegura la existencia de la fila padre antes de cualquier inyección
+    if (window.ETeacherTelemetry && this.rowsData.length > 0) {
+      const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
+      const lowCount = this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE").length;
+
+      window.ETeacherTelemetry.logSession({
+        id: this.currentSessionId,
+        teacherId: "docente-local",
+        unitTitle: this.activeExercise?.unitTitle || "Sin título",
+        conceptId: this.activeExercise?.conceptId || "general",
+        totalStudents: this.rowsData.length,
+        highCertaintyCount: highCount,
+        lowCertaintyCount: lowCount,
+        aiAnalysisDurationMs: 0,
+        totalSessionDurationMs: 0
+      });
     }
 
     const modal = document.getElementById("et-triage-modal");
@@ -325,6 +339,7 @@ window.ETeacherUI = {
       this.currentAnalysisRunId++;
       this.isAnalyzing = false;
 
+      // Actualizar sesión al salir para guardar duraciones y conteos finales analizados
       if (this.sessionStartTime > 0 && this.rowsData.length > 0 && window.ETeacherTelemetry) {
         const totalSessionMs = Date.now() - this.sessionStartTime;
         const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
@@ -332,8 +347,9 @@ window.ETeacherUI = {
 
         window.ETeacherTelemetry.logSession({
           id: this.currentSessionId,
-          unitTitle: this.activeExercise?.unitTitle,
-          conceptId: this.activeExercise?.conceptId,
+          teacherId: "docente-local",
+          unitTitle: this.activeExercise?.unitTitle || "Sin título",
+          conceptId: this.activeExercise?.conceptId || "general",
           totalStudents: this.rowsData.length,
           highCertaintyCount: highCount,
           lowCertaintyCount: lowCount,
@@ -413,13 +429,21 @@ window.ETeacherUI = {
         return;
       }
 
+      // Normalizar la capa combinada a "todas" si el backend responde con "completa"
+      const layersNormalized = {
+        correctiva: result.layers?.correctiva || "",
+        socratica: result.layers?.socratica || "",
+        motivacional: result.layers?.motivacional || "",
+        todas: result.layers?.todas || result.layers?.completa || ""
+      };
+
       row.certaintyLevel = result.certaintyLevel;
       row.certaintyScore = result.certaintyScore;
       row.justificacion = result.justificacion;
       row.nota = result.nota;
       row.originalNota = result.nota;
-      row.layers = result.layers;
-      row.originalLayers = { ...result.layers };
+      row.layers = layersNormalized;
+      row.originalLayers = { ...layersNormalized };
 
       this.syncRowProgress(total, row.nombre);
     }
