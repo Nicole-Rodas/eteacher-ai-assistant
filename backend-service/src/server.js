@@ -19,6 +19,11 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+// Ruta raíz para keep-alive (cron-job) y verificación rápida en el navegador
+app.get("/", (req, res) => {
+  res.status(200).send("eTeacher Backend running");
+});
+
 app.get("/health", (req, res) => {
   res.json({ status: "ok", model: process.env.GEMINI_MODEL || "gemini-flash-latest" });
 });
