@@ -5,6 +5,7 @@ import {
   getMaxRotationAttempts,
   fetchAvailableModels
 } from "../clients/gemini-registry.js";
+import { rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -16,19 +17,29 @@ function cleanJsonString(raw) {
     .trim();
 }
 
+function isRateLimitOrUnavailable(error) {
+  const errStr = String(error?.message || "").toLowerCase();
+  const status = error?.status || error?.statusCode;
+
+  return (
+    status === 429 ||
+    status === 503 ||
+    errStr.includes("429") ||
+    errStr.includes("503") ||
+    errStr.includes("resource_exhausted") ||
+    errStr.includes("quota")
+  );
+}
+
 function isRotatableError(error) {
   const errStr = String(error?.message || "").toLowerCase();
   const causeCode = String(error?.cause?.code || "");
   const status = error?.status || error?.statusCode;
 
   return (
-    status === 503 ||
-    status === 429 ||
+    isRateLimitOrUnavailable(error) ||
     status === 404 ||
-    // Capturar error 400 cuando el modelo seleccionado no soporta visión/imágenes
-    status === 400 && (errStr.includes("image") || errStr.includes("modality") || errStr.includes("not enabled")) ||
-    errStr.includes("503") ||
-    errStr.includes("429") ||
+    (status === 400 && (errStr.includes("image") || errStr.includes("modality") || errStr.includes("not enabled"))) ||
     errStr.includes("404") ||
     errStr.includes("image input modality is not enabled") ||
     errStr.includes("unsupported modality") ||
@@ -37,6 +48,17 @@ function isRotatableError(error) {
     causeCode.includes("ECONNRESET") ||
     causeCode.includes("UND_ERR")
   );
+}
+
+function handleRotation(error) {
+  // Si la clave se quedó sin cuota (429/503) y tenemos más llaves disponibles, rotar API Key de inmediato
+  if (isRateLimitOrUnavailable(error) && getKeyCount() > 1) {
+    console.warn(`[Gemini Service] Saturación de cuota detectada. Rotando API Key...`);
+    rotateApiKey();
+  } else {
+    // Si es error de modelo (404, modalidad incompatible, o sólo tenemos 1 llave), rotar modelo
+    rotateModel();
+  }
 }
 
 export async function generateFormativeFeedback(inputData) {
@@ -75,8 +97,7 @@ export async function generateFormativeFeedback(inputData) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let modelName = getCurrentModelName();
 
-    // Si la entrega incluye canvas y el modelo actual es puramente textual o de transcripción,
-    // rotar proactivamente a un modelo con soporte de visión
+    // Si la entrega incluye canvas y el modelo actual no soporta visión, avanzar modelo
     if (hasImage && (modelName.includes("transcribe") || modelName.includes("embedding") || modelName.includes("text-"))) {
       console.warn(`[Gemini Triaje] El modelo [${modelName}] no soporta visión. Rotando modelo...`);
       rotateModel();
@@ -109,9 +130,9 @@ export async function generateFormativeFeedback(inputData) {
       lastError = error;
 
       if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Triaje] [${modelName}] falló (${error.message}). Rotando al siguiente modelo/clave...`);
-        rotateModel();
-        await sleep(1000);
+        console.warn(`[Gemini Triaje] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}).`);
+        handleRotation(error);
+        await sleep(600);
         continue;
       }
 
@@ -162,9 +183,9 @@ export async function generateChatResponse(systemPrompt, messages = []) {
       lastError = error;
 
       if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Chat] [${modelName}] falló. Reintentando...`);
-        rotateModel();
-        await sleep(1000);
+        console.warn(`[Gemini Chat] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}).`);
+        handleRotation(error);
+        await sleep(600);
         continue;
       }
 

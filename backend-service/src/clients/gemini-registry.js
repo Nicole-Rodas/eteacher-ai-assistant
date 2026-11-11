@@ -2,11 +2,17 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getActiveApiKey, rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
+
+// Fallbacks de emergencia ordenados por la prioridad solicitada (sin series 2.5 ni obsoletas)
 const EMERGENCY_FALLBACKS = [
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-8b",
-  "gemini-1.5-pro"
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-flash-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-pro-latest"
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,16 +51,25 @@ export async function fetchAvailableModels() {
         const methods = m.supportedGenerationMethods || [];
         const name = (m.name || "").toLowerCase();
         const supportsGenerate = methods.includes("generateContent");
-        const isGemini = name.includes("gemini");
+
+        // Excluir descontinuados (2.5, 1.0, etc.) e incompatibles con JSON/código
         const isUnsupported =
+          name.includes("2.5") ||
+          name.includes("1.0") ||
           name.includes("embedding") ||
           name.includes("aqa") ||
           name.includes("tts") ||
           name.includes("audio") ||
-          name.includes("thinking") ||
-          name.includes("1.0");
+          name.includes("transcribe") ||
+          name.includes("robotics") ||
+          name.includes("computer-use") ||
+          name.includes("banana") ||
+          name.includes("argon") ||
+          name.includes("carbon") ||
+          name.includes("customtools") ||
+          name.includes("thinking");
 
-        return supportsGenerate && isGemini && !isUnsupported;
+        return supportsGenerate && name.includes("gemini") && !isUnsupported;
       })
       .map((m) => m.name.replace(/^models\//, ""));
 
@@ -62,25 +77,31 @@ export async function fetchAvailableModels() {
       throw new Error("El filtrado no arrojó modelos compatibles.");
     }
 
+    // Ordenamiento jerárquico según la prioridad establecida
     validTextModels.sort((a, b) => {
-      const score = (name) => {
-        if (name.includes("2.0-flash")) return 100;
-        if (name.includes("1.5-flash")) return 90;
-        if (name.includes("1.5-flash-8b")) return 80;
-        if (name.includes("flash")) return 70;
-        if (name.includes("pro")) return 60;
+      const getScore = (name) => {
+        const n = name.toLowerCase();
+        if (n.includes("3.8-flash")) return 150;
+        if (n.includes("3.7-flash")) return 140;
+        if (n.includes("3.6-flash")) return 130;
+        if (n.includes("3.5-flash") && !n.includes("lite")) return 120;
+        if (n === "gemini-flash-latest") return 110;
+        if (n.includes("3-flash")) return 100;
+        if (n.includes("flash-lite") || n.includes("lite")) return 80;
+        if (n.includes("pro-latest")) return 70;
+        if (n.includes("pro")) return 60;
         return 40;
       };
-      return score(b) - score(a);
+      return getScore(b) - getScore(a);
     });
 
     cachedModels = validTextModels;
     lastModelFetch = now;
     currentModelIndex = 0;
-    console.log("[Gemini Registry] Modelos descubiertos y activos:", cachedModels);
+    console.log("[Gemini Registry] Modelos descubiertos y activos (ordenados):", cachedModels);
     return cachedModels;
   } catch (error) {
-    console.warn(`[Gemini Registry] Catálogo dinámico falló (${error.message}).`);
+    console.warn(`[Gemini Registry] Catálogo dinámico falló (${error.message}). Usando lista de respaldo.`);
     if (rotateApiKey()) {
       return fetchAvailableModels();
     }
@@ -92,7 +113,9 @@ export async function fetchAvailableModels() {
 }
 
 export function rotateModel() {
-  if (!cachedModels || cachedModels.length === 0) return;
+  if (!cachedModels || cachedModels.length === 0) {
+    cachedModels = EMERGENCY_FALLBACKS;
+  }
   currentModelIndex = (currentModelIndex + 1) % cachedModels.length;
 
   if (currentModelIndex === 0 && getKeyCount() > 1) {
@@ -110,7 +133,8 @@ export function getCurrentModelName() {
 }
 
 export function getMaxRotationAttempts() {
-  return (cachedModels?.length || EMERGENCY_FALLBACKS.length) * getKeyCount();
+  const modelCount = cachedModels?.length || EMERGENCY_FALLBACKS.length;
+  return Math.min(modelCount * getKeyCount(), 15);
 }
 
 export function getClient() {
@@ -122,7 +146,7 @@ export async function verifyModelHealth() {
     await fetchAvailableModels();
     console.log("[Gemini Registry] Comprobando conectividad (Ping inicial)...");
 
-    const maxTests = cachedModels.length;
+    const maxTests = Math.min(cachedModels.length, 3);
     let tested = 0;
     let verified = false;
 
@@ -144,7 +168,7 @@ export async function verifyModelHealth() {
     }
 
     if (!verified) {
-      console.warn("[Gemini Registry] ❌ Ping inicial no completado. Recuperación diferida a ejecución.");
+      console.warn("[Gemini Registry] ❌ Ping inicial no completado en los primeros modelos prioritarios. Se resolverá bajo demanda.");
     }
   } catch (err) {
     console.warn("[Gemini Registry] Error en warm-up:", err.message);
