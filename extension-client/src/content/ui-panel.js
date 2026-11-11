@@ -1,6 +1,7 @@
 window.ETeacherUI = {
   activeExercise: null,
-  activeTab: "HIGH",
+  activeTab: "PENDING", // Arranca en PENDING para ver la lista antes de evaluar
+  testGroup: "all", // "all" | "groupA" (Prueba a Prueba 8) | "groupB" (Prueba 9 a 16)
   rowsData: [],
   currentAnalysisRunId: 0,
   isAnalyzing: false,
@@ -35,6 +36,26 @@ window.ETeacherUI = {
     }
   },
 
+  // Validador de pertenencia por nombre textual exacto
+  matchesSelectedGroup(row) {
+    if (this.testGroup === "all") return true;
+    const name = String(row.nombre || "").trim();
+
+    if (this.testGroup === "groupA") {
+      // Coincide con "Usuario Prueba" (sin número) O "Usuario Prueba2" a "Usuario Prueba8"
+      const isBasePrueba = /^Usuario\s*Prueba$/i.test(name);
+      const isPrueba2to8 = /Usuario\s*Prueba\s*[2-8]\b/i.test(name);
+      return isBasePrueba || isPrueba2to8;
+    }
+
+    if (this.testGroup === "groupB") {
+      // Coincide con "Usuario Prueba9" hasta "Usuario Prueba16"
+      return /Usuario\s*Prueba\s*(9|1[0-6])\b/i.test(name);
+    }
+
+    return true;
+  },
+
   createModalContainer() {
     if (document.getElementById("et-triage-modal")) return;
 
@@ -51,16 +72,26 @@ window.ETeacherUI = {
       "    </div>",
       "    <button class=\"et-close-x\" id=\"et-close-x\" title=\"Cerrar\">" + this.ICONS.close + "</button>",
       "  </div>",
-      "  <div class=\"et-tabs-bar\">",
-      "    <button class=\"et-tab-btn active\" id=\"et-tab-high\">",
+      "  <div class=\"et-tabs-bar\" style=\"display:flex; align-items:center; gap:8px; flex-wrap:wrap;\">",
+      "    <button class=\"et-tab-btn\" id=\"et-tab-pending\">",
+      "      ⏳ Por Evaluar <span class=\"et-count-pill\" id=\"et-count-pending\">0</span>",
+      "    </button>",
+      "    <button class=\"et-tab-btn\" id=\"et-tab-high\">",
       "      " + this.ICONS.checkCircle + " Certeza Alta <span class=\"et-count-pill\" id=\"et-count-high\">0</span>",
       "    </button>",
       "    <button class=\"et-tab-btn\" id=\"et-tab-low\">",
-      "      " + this.ICONS.alertCircle + " Baja Certeza / Por Revisar <span class=\"et-count-pill\" id=\"et-count-low\">0</span>",
+      "      " + this.ICONS.alertCircle + " Certeza Media/Baja <span class=\"et-count-pill\" id=\"et-count-low\">0</span>",
       "    </button>",
-      "    <button class=\"et-reanalyze-btn\" id=\"et-reanalyze-btn\">",
-      "      " + this.ICONS.sparkles + " Analizar Entregas con IA",
-      "    </button>",
+      "    <div style=\"margin-left:auto; display:flex; align-items:center; gap:6px;\">",
+      "      <select id=\"et-test-group-select\" style=\"padding:5px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px; font-weight:600; background:#f8fafc; color:#334155; cursor:pointer;\">",
+      "        <option value=\"all\">Lote: Todos</option>",
+      "        <option value=\"groupA\">Grupo A (Prueba a Prueba 8)</option>",
+      "        <option value=\"groupB\">Grupo B (Prueba 9 a Prueba 16)</option>",
+      "      </select>",
+      "      <button class=\"et-reanalyze-btn\" id=\"et-reanalyze-btn\">",
+      "        " + this.ICONS.sparkles + " Analizar con IA",
+      "      </button>",
+      "    </div>",
       "  </div>",
       "  <div id=\"et-progress-wrapper\" class=\"et-progress-wrapper\">",
       "    <div class=\"et-progress-info\">",
@@ -88,7 +119,7 @@ window.ETeacherUI = {
       "  </div>",
       "  <div class=\"et-modal-footer\">",
       "    <span class=\"et-footer-hint\" id=\"et-footer-hint\">",
-      "      Elige el tipo de respuesta en el menú desplegable y edita los campos si es necesario.",
+      "      Selecciona tu lote de prueba y presiona \"Analizar con IA\" para comenzar.",
       "    </span>",
       "    <div class=\"et-footer-actions\">",
       "      <button class=\"et-btn et-btn-cancel\" id=\"et-btn-cancel\">Cancelar</button>",
@@ -107,6 +138,12 @@ window.ETeacherUI = {
     document.getElementById("et-close-x").addEventListener("click", () => this.closeModal());
     document.getElementById("et-btn-cancel").addEventListener("click", () => this.closeModal());
 
+    document.getElementById("et-tab-pending").addEventListener("click", () => {
+      this.activeTab = "PENDING";
+      this.updateTabsUI();
+      this.renderTable();
+    });
+
     document.getElementById("et-tab-high").addEventListener("click", () => {
       this.activeTab = "HIGH";
       this.updateTabsUI();
@@ -119,10 +156,16 @@ window.ETeacherUI = {
       this.renderTable();
     });
 
+    const groupSelect = document.getElementById("et-test-group-select");
+    if (groupSelect) {
+      groupSelect.addEventListener("change", (e) => {
+        this.testGroup = e.target.value;
+        this.updateTabsUI();
+        this.renderTable();
+      });
+    }
+
     document.getElementById("et-reanalyze-btn").addEventListener("click", () => {
-      if (window.ETeacherStorage) {
-        window.ETeacherStorage.clearExercise(this.activeExercise);
-      }
       this.analyzeAllSubmissions({ forceAll: true });
     });
 
@@ -150,7 +193,6 @@ window.ETeacherUI = {
       this.showBanner("Se limpió el contenido seleccionado.", false);
     });
 
-    // INYECCIÓN AUTOMATIZADA DIRECTA A TOAST UI (1 alumno o lote completo)
     document.getElementById("et-btn-accept").addEventListener("click", async () => {
       const selected = this.getFilteredRows().filter(r => r.selected);
       if (selected.length === 0) {
@@ -191,7 +233,6 @@ window.ETeacherUI = {
             row.selected = false;
             successCount++;
 
-            // Mapeo seguro a los valores de la base de datos
             const layerToSend = row.selectedLayer === "completa" ? "todas" : row.selectedLayer;
 
             if (this.currentSessionId && window.ETeacherTelemetry) {
@@ -244,7 +285,6 @@ window.ETeacherUI = {
     this.currentAnalysisRunId++;
     this.isAnalyzing = false;
 
-    // Generar UUID de sesión de inmediato
     this.currentSessionId = (typeof crypto !== "undefined" && crypto.randomUUID) 
       ? crypto.randomUUID() 
       : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
@@ -272,7 +312,7 @@ window.ETeacherUI = {
         selected: true,
         certaintyLevel: "PENDIENTE",
         certaintyScore: 0,
-        justificacion: "Pendiente de análisis...",
+        justificacion: "Pendiente de análisis con IA...",
         nota: 0,
         originalNota: 0,
         selectedLayer: "correctiva",
@@ -299,7 +339,6 @@ window.ETeacherUI = {
       }
     }
 
-    // REGISTRO INMEDIATO DE LA SESIÓN: asegura la existencia de la fila padre antes de cualquier inyección
     if (window.ETeacherTelemetry && this.rowsData.length > 0) {
       const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
       const lowCount = this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE").length;
@@ -322,13 +361,14 @@ window.ETeacherUI = {
       modal.style.setProperty("display", "flex", "important");
     }
 
+    // Si todo está pendiente, empezar en la pestaña de pendientes
+    const targetPending = this.rowsData.filter(r => this.matchesSelectedGroup(r) && r.certaintyLevel === "PENDIENTE");
+    this.activeTab = targetPending.length > 0 ? "PENDING" : "HIGH";
+
     this.updateTabsUI();
     this.renderTable();
 
-    const hasPending = this.rowsData.some(r => r.certaintyLevel === "PENDIENTE");
-    if (hasPending) {
-      this.analyzeAllSubmissions({ forceAll: false });
-    }
+    // NOTA: NO se dispara el análisis automático. Espera a que el usuario presione "Analizar con IA".
   },
 
   closeModal() {
@@ -339,7 +379,6 @@ window.ETeacherUI = {
       this.currentAnalysisRunId++;
       this.isAnalyzing = false;
 
-      // Actualizar sesión al salir para guardar duraciones y conteos finales analizados
       if (this.sessionStartTime > 0 && this.rowsData.length > 0 && window.ETeacherTelemetry) {
         const totalSessionMs = Date.now() - this.sessionStartTime;
         const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
@@ -382,7 +421,8 @@ window.ETeacherUI = {
     if (window.ETeacherStorage) {
       window.ETeacherStorage.saveExerciseRows(this.activeExercise, this.rowsData);
     }
-    const completed = this.rowsData.filter(r => r.certaintyLevel !== "PENDIENTE").length;
+    const targetRows = this.rowsData.filter(r => this.matchesSelectedGroup(r));
+    const completed = targetRows.filter(r => r.certaintyLevel !== "PENDIENTE").length;
     this.updateProgressUI(completed, total, studentName);
     this.updateTabsUI();
     this.renderTable();
@@ -397,18 +437,22 @@ window.ETeacherUI = {
       btn.disabled = true;
       btn.innerHTML = this.ICONS.sparkles + " Analizando con IA...";
     }
-    this.showBanner("Evaluando entregas de los estudiantes en tiempo real...", false);
+    this.showBanner("Evaluando entregas del lote en tiempo real...", false);
+
+    // Filtrar estrictamente solo los que entran en el grupo seleccionado
+    const targetRows = this.rowsData.filter(r => this.matchesSelectedGroup(r));
 
     if (options && options.forceAll) {
-      this.rowsData.forEach(r => { r.certaintyLevel = "PENDIENTE"; });
+      targetRows.forEach(r => { r.certaintyLevel = "PENDIENTE"; });
+      this.activeTab = "PENDING";
       this.updateTabsUI();
       this.renderTable();
     }
 
-    const total = this.rowsData.length;
+    const total = targetRows.length;
     const aiStartTime = Date.now();
 
-    for (const row of this.rowsData) {
+    for (const row of targetRows) {
       if (runId !== this.currentAnalysisRunId) {
         this.isAnalyzing = false;
         return;
@@ -429,7 +473,6 @@ window.ETeacherUI = {
         return;
       }
 
-      // Normalizar la capa combinada a "todas" si el backend responde con "completa"
       const layersNormalized = {
         correctiva: result.layers?.correctiva || "",
         socratica: result.layers?.socratica || "",
@@ -463,36 +506,48 @@ window.ETeacherUI = {
       if (prog) prog.style.display = "none";
     }, 800);
 
-    const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
-    if (highCount === 0 && this.rowsData.length > 0) {
-      this.activeTab = "LOW";
-    }
+    // Cambiar automáticamente a la pestaña con resultados
+    const highCount = targetRows.filter(r => r.certaintyLevel === "ALTA").length;
+    this.activeTab = highCount > 0 ? "HIGH" : "LOW";
 
     this.updateTabsUI();
     this.renderTable();
   },
 
   getFilteredRows() {
-    if (this.activeTab === "HIGH") {
-      return this.rowsData.filter(r => r.certaintyLevel === "ALTA");
+    const groupRows = this.rowsData.filter(r => this.matchesSelectedGroup(r));
+
+    if (this.activeTab === "PENDING") {
+      return groupRows.filter(r => r.certaintyLevel === "PENDIENTE");
     }
-    return this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE");
+    if (this.activeTab === "HIGH") {
+      return groupRows.filter(r => r.certaintyLevel === "ALTA");
+    }
+    return groupRows.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE");
   },
 
   updateTabsUI() {
-    const highCount = this.rowsData.filter(r => r.certaintyLevel === "ALTA").length;
-    const lowCount = this.rowsData.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE").length;
+    const groupRows = this.rowsData.filter(r => this.matchesSelectedGroup(r));
+    const pendingCount = groupRows.filter(r => r.certaintyLevel === "PENDIENTE").length;
+    const highCount = groupRows.filter(r => r.certaintyLevel === "ALTA").length;
+    const lowCount = groupRows.filter(r => r.certaintyLevel !== "ALTA" && r.certaintyLevel !== "PENDIENTE").length;
 
+    document.getElementById("et-count-pending").textContent = pendingCount;
     document.getElementById("et-count-high").textContent = highCount;
     document.getElementById("et-count-low").textContent = lowCount;
 
+    document.getElementById("et-tab-pending").classList.toggle("active", this.activeTab === "PENDING");
     document.getElementById("et-tab-high").classList.toggle("active", this.activeTab === "HIGH");
     document.getElementById("et-tab-low").classList.toggle("active", this.activeTab === "LOW");
 
     const hint = document.getElementById("et-footer-hint");
-    hint.textContent = this.activeTab === "LOW"
-      ? "Revisa las entregas con certeza baja, entregas en blanco o respuestas muy cortas."
-      : "Selecciona la capa pedagógica que prefieras o edita el texto.";
+    if (this.activeTab === "PENDING") {
+      hint.textContent = "Entregas listas para evaluar. Pulsa \"Analizar con IA\" para comenzar.";
+    } else if (this.activeTab === "LOW") {
+      hint.textContent = "Revisa las entregas con certeza baja, entregas en blanco o respuestas muy cortas.";
+    } else {
+      hint.textContent = "Selecciona la capa pedagógica que prefieras o edita el texto antes de inyectar.";
+    }
   },
 
   renderTable() {
@@ -501,7 +556,7 @@ window.ETeacherUI = {
     const rows = this.getFilteredRows();
 
     if (rows.length === 0) {
-      tbody.innerHTML = "<tr><td colspan=\"5\" class=\"et-empty-row\">No hay entregas en esta pestaña.</td></tr>";
+      tbody.innerHTML = "<tr><td colspan=\"5\" class=\"et-empty-row\">No hay entregas en este grupo o pestaña.</td></tr>";
       return;
     }
 
@@ -513,7 +568,7 @@ window.ETeacherUI = {
 
       const formattedText = currentText.trim()
         ? escapeFn(currentText).replace(/\n/g, "<br>")
-        : "<em style=\"color:#64748b;\">Sin texto en esta capa</em>";
+        : "<em style=\"color:#64748b;\">" + escapeFn(row.justificacion || "Sin análisis") + "</em>";
 
       const selectOptionsHtml = Object.entries(this.LAYER_LABELS)
         .map(([key, label]) => "<option value=\"" + key + "\" " + (row.selectedLayer === key ? "selected" : "") + ">" + label + "</option>")
