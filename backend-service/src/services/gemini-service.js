@@ -2,8 +2,7 @@ import {
   getClient,
   getCurrentModelName,
   rotateModel,
-  getMaxRotationAttempts,
-  fetchAvailableModels
+  getMaxRotationAttempts
 } from "../clients/gemini-registry.js";
 import { rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
@@ -17,7 +16,6 @@ function cleanJsonString(raw) {
     .trim();
 }
 
-// Determina si el error es estrictamente agotamiento de cuota de la API key (429)
 function isQuotaExhausted(error) {
   const errStr = String(error?.message || "").toLowerCase();
   const status = error?.status || error?.statusCode;
@@ -30,7 +28,6 @@ function isQuotaExhausted(error) {
   );
 }
 
-// Determina si el modelo está saturado en Google (503 Service Unavailable)
 function isModelOverloaded(error) {
   const errStr = String(error?.message || "").toLowerCase();
   const status = error?.status || error?.statusCode;
@@ -64,23 +61,19 @@ function isRotatableError(error) {
 }
 
 function handleRotation(error) {
-  // Si SOLO la llave se quedó sin cuota (429), rotar API Key
   if (isQuotaExhausted(error) && getKeyCount() > 1) {
-    console.warn(`[Gemini Service] Cuota 429 agotada en credencial actual. Rotando API Key...`);
+    console.warn(`[Gemini Service] Cuota 429 agotada. Rotando API Key...`);
     rotateApiKey();
     return;
   }
 
-  // Si es 503 (servidor saturado/high demand), 404, modalidad incompatible, etc., rotar MODELO de inmediato
   if (isModelOverloaded(error)) {
-    console.warn(`[Gemini Service] Modelo saturado en Google (503 High Demand). Rotando inmediatamente de modelo...`);
+    console.warn(`[Gemini Service] Modelo saturado (503 High Demand). Rotando modelo inmediatamente...`);
   }
   rotateModel();
 }
 
 export async function generateFormativeFeedback(inputData) {
-  await fetchAvailableModels();
-
   const maxAttempts = getMaxRotationAttempts();
   let lastError = null;
 
@@ -90,7 +83,7 @@ export async function generateFormativeFeedback(inputData) {
   const hasImage = Boolean(
     canvasImage &&
     typeof canvasImage === "string" &&
-    canvasImage.trim().length > 50 &&
+    canvasImage.trim().length > 100 &&
     canvasImage !== "[DIAGRAMA_EN_CANVAS]"
   );
 
@@ -100,7 +93,7 @@ export async function generateFormativeFeedback(inputData) {
       .replace(/^data:image\/[a-z]+;base64,/, "")
       .replace(/\s/g, "");
 
-    if (cleanBase64.length > 50) {
+    if (cleanBase64.length > 100) {
       parts.push({
         inlineData: {
           mimeType: "image/png",
@@ -115,7 +108,6 @@ export async function generateFormativeFeedback(inputData) {
     let modelName = getCurrentModelName();
 
     if (hasImage && (modelName.includes("transcribe") || modelName.includes("embedding") || modelName.includes("text-"))) {
-      console.warn(`[Gemini Triaje] El modelo [${modelName}] no soporta visión. Rotando modelo...`);
       rotateModel();
       modelName = getCurrentModelName();
     }
@@ -126,8 +118,7 @@ export async function generateFormativeFeedback(inputData) {
         model: modelName,
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0.0,
-          topP: 1.0
+          temperature: 0.2 // Acelera drásticamente la generación del JSON
         }
       });
 
@@ -146,9 +137,9 @@ export async function generateFormativeFeedback(inputData) {
       lastError = error;
 
       if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Triaje] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}).`);
+        console.warn(`[Gemini Triaje] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}). Rotando...`);
         handleRotation(error);
-        await sleep(500);
+        await sleep(300);
         continue;
       }
 
@@ -163,8 +154,6 @@ export async function generateChatResponse(systemPrompt, messages = []) {
   if (!Array.isArray(messages) || messages.length === 0) {
     throw new Error("El arreglo de mensajes no puede estar vacío.");
   }
-
-  await fetchAvailableModels();
 
   const maxAttempts = getMaxRotationAttempts();
   let lastError = null;
@@ -184,8 +173,7 @@ export async function generateChatResponse(systemPrompt, messages = []) {
         model: modelName,
         systemInstruction: systemPrompt,
         generationConfig: {
-          temperature: 0.7,
-          topP: 0.95
+          temperature: 0.7
         }
       });
 
@@ -199,9 +187,9 @@ export async function generateChatResponse(systemPrompt, messages = []) {
       lastError = error;
 
       if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Chat] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}).`);
+        console.warn(`[Gemini Chat] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}). Rotando...`);
         handleRotation(error);
-        await sleep(500);
+        await sleep(300);
         continue;
       }
 
