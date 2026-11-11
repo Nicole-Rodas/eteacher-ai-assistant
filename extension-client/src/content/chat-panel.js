@@ -158,53 +158,43 @@ window.ETeacherChat = {
     document.getElementById("et-chat-typing").style.display = "block";
     this.history.push({ role: "user", content: userText });
 
-    // 1. Iniciar cronómetro de latencia
     const startTimeMs = Date.now();
 
     try {
       const userLangCode = this.getLang();
+      const currentConceptId = (window.ETeacherUI && window.ETeacherUI.activeExercise) 
+        ? window.ETeacherUI.activeExercise.conceptId 
+        : "general";
 
-      const response = await fetch("http://localhost:3000/api/chat", {
+      // 1. Llamada al backend en Render
+      const response = await fetch("https://eteacher-backend.onrender.com/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userLangCode: userLangCode,
+          conceptContext: currentConceptId,
           messages: this.history
         })
       });
 
-      if (!response.ok) throw new Error("Error en el servidor");
+      if (!response.ok) {
+        throw new Error(`Error en el servidor: HTTP ${response.status}`);
+      }
 
       const data = await response.json();
       const aiText = data.respuesta || "Respuesta sin contenido.";
-
-      // 2. Calcular tiempo total
-      const durationMs = Date.now() - startTimeMs;
 
       document.getElementById("et-chat-typing").style.display = "none";
       this.history.push({ role: "assistant", content: aiText });
       this.addMessage("ai", aiText);
 
-      // 3. TELEMETRÍA: Enviar registro de la interacción de forma asíncrona
-      const currentConceptId = (window.ETeacherUI && window.ETeacherUI.activeExercise) 
-        ? window.ETeacherUI.activeExercise.conceptId 
-        : "general";
-
-      fetch("http://localhost:3000/api/telemetry/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conceptContext: currentConceptId,
-          userMessageLength: userText.length,
-          aiResponseLength: aiText.length,
-          responseDurationMs: durationMs
-        })
-      }).catch(err => console.warn("[eTeacher] Error guardando telemetría de chat:", err));
+      // NOTA: La telemetría hacia Supabase ya se ejecuta internamente
+      // en el endpoint /api/chat del backend en Render.
 
     } catch (error) {
       document.getElementById("et-chat-typing").style.display = "none";
-      this.addErrorNotice("Error de conexión con el tutor IA. Verifica que el servidor local esté activo.");
-      console.error(error);
+      this.addErrorNotice("Error de conexión con el tutor IA. Comprueba la conexión con el servidor.");
+      console.error("[eTeacher Chat Error]:", error);
     }
   },
 

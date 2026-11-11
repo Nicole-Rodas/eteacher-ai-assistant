@@ -1,48 +1,65 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getActiveApiKey, rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
-const CACHE_TTL_MS = 60 * 60 * 1000;
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora exacta
 
-// Lista priorizada local. Arranca de inmediato sin esperar a la red.
 const EMERGENCY_FALLBACKS = [
   "gemini-flash-latest",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash",
-  "gemini-3.8-flash",
   "gemini-flash-lite-latest",
   "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
   "gemini-pro-latest"
 ];
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 let cachedModels = [...EMERGENCY_FALLBACKS];
-let lastModelFetch = 0;
 let currentModelIndex = 0;
+let isUpdating = false;
 
-// Pool de clientes en memoria para reutilizar sockets HTTP/2
-const clientPool = new Map();
+// Reutilización de sockets HTTP/2 por clave
+const clientCache = new Map();
 
 export function getClient() {
   const key = getActiveApiKey();
-  if (!clientPool.has(key)) {
-    clientPool.set(key, new GoogleGenerativeAI(key));
+  if (!clientCache.has(key)) {
+    clientCache.set(key, new GoogleGenerativeAI(key));
   }
-  return clientPool.get(key);
+  return clientCache.get(key);
 }
 
-// Descubrimiento asíncrono no bloqueante
-export async function fetchAvailableModels() {
-  const now = Date.now();
-  if (cachedModels.length > 0 && now - lastModelFetch < CACHE_TTL_MS) {
-    return cachedModels;
+export function getCurrentModelName() {
+  return cachedModels[currentModelIndex] || cachedModels[0];
+}
+
+export function rotateModel() {
+  currentModelIndex = (currentModelIndex + 1) % cachedModels.length;
+  console.warn(`[Gemini Registry] 🔄 Rotando a modelo: [${cachedModels[currentModelIndex]}]`);
+
+  if (currentModelIndex === 0 && getKeyCount() > 1) {
+    rotateApiKey();
   }
+}
+
+export function getMaxRotationAttempts() {
+  return Math.min(cachedModels.length * getKeyCount(), 10);
+}
+
+// Devuelve la lista en memoria al instante (0 ms de bloqueo para el triaje/chat)
+export async function fetchAvailableModels() {
+  return cachedModels;
+}
+
+// Tarea en segundo plano para actualizar el catálogo dinámico desde Google
+async function refreshModelsCatalogInBackground() {
+  if (isUpdating) return;
+  isUpdating = true;
 
   const apiKey = getActiveApiKey();
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
@@ -101,60 +118,31 @@ export async function fetchAvailableModels() {
       });
 
       cachedModels = validTextModels;
-      lastModelFetch = now;
       currentModelIndex = 0;
-      console.log("[Gemini Registry] Catálogo dinámico actualizado:", cachedModels);
+      console.log("[Gemini Registry] 🔄 Catálogo actualizado en segundo plano:", cachedModels);
     }
   } catch (error) {
-    console.warn(`[Gemini Registry] Aviso en catálogo (${error.message}). Continuando con lista activa.`);
-    lastModelFetch = now; // Evita reintentar en bucle inmediato
+    console.warn(`[Gemini Registry] Consulta horaria de modelos no completada (${error.message}). Se mantiene la lista actual.`);
+  } finally {
+    isUpdating = false;
   }
-
-  return cachedModels;
 }
 
-export function rotateModel() {
-  if (!cachedModels || cachedModels.length === 0) {
-    cachedModels = [...EMERGENCY_FALLBACKS];
-  }
-  currentModelIndex = (currentModelIndex + 1) % cachedModels.length;
-
-  if (currentModelIndex === 0 && getKeyCount() > 1) {
-    rotateApiKey();
-  }
-
-  console.warn(`[Gemini Registry] Rotación a modelo: [${cachedModels[currentModelIndex]}]`);
-}
-
-export function getCurrentModelName() {
-  if (!cachedModels || cachedModels.length === 0) {
-    return EMERGENCY_FALLBACKS[0];
-  }
-  return cachedModels[currentModelIndex] || EMERGENCY_FALLBACKS[0];
-}
-
-export function getMaxRotationAttempts() {
-  const modelCount = cachedModels?.length || EMERGENCY_FALLBACKS.length;
-  return Math.min(modelCount * getKeyCount(), 15);
-}
-
-export async function verifyModelHealth() {
+// 1. Warm-up y primer chequeo dinámico al arrancar en background
+setTimeout(async () => {
   try {
     const modelName = getCurrentModelName();
     const client = getClient();
     const model = client.getGenerativeModel({ model: modelName });
     await model.generateContent("ping");
-    console.log(`[Gemini Registry] ✅ Modelo verificado y operativo: [${modelName}]`);
+    console.log(`[Gemini Registry] ✅ Modelo inicial verificado: [${modelName}]`);
   } catch (err) {
-    console.warn(`[Gemini Registry] ⚠️ Modelo inicial falló ping (${err.message}). Rotando...`);
-    rotateModel();
+    console.warn(`[Gemini Registry] Warmup inicial: ${err.message}`);
   }
-}
 
-// Warm-up inicial en background sin bloquear
-setTimeout(() => {
-  verifyModelHealth();
-  fetchAvailableModels();
-}, 100);
+  // Refresca catálogo dinámico por primera vez sin estorbar el arranque
+  refreshModelsCatalogInBackground();
+}, 500);
 
-setInterval(fetchAvailableModels, CACHE_TTL_MS);
+// 2. Programador estricto para ejecutarse únicamente cada 1 hora
+setInterval(refreshModelsCatalogInBackground, CACHE_TTL_MS);
