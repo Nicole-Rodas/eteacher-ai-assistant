@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabase.js";
+import crypto from "crypto";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -6,11 +7,6 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // 1. REGISTRAR SESIÓN DE TRIAJE (Lote de estudiantes analizados)
 // ============================================================================
 export async function logTriageSession(data = {}) {
-  if (!supabase) {
-    console.warn("[Telemetry] Cliente Supabase no inicializado.");
-    throw new Error("Cliente de base de datos no configurado.");
-  }
-
   const {
     id,
     sessionId,
@@ -24,8 +20,13 @@ export async function logTriageSession(data = {}) {
     totalSessionDurationMs
   } = data;
 
-  const targetId = id || sessionId;
+  const rawTargetId = id || sessionId;
+  const targetId = rawTargetId && UUID_REGEX.test(rawTargetId) 
+    ? rawTargetId 
+    : crypto.randomUUID();
+
   const sessionRow = {
+    id: targetId,
     teacher_id: teacherId || "docente-local",
     unit_title: unitTitle || "Sin título",
     concept_id: conceptId || "general",
@@ -36,34 +37,35 @@ export async function logTriageSession(data = {}) {
     total_session_duration_ms: Math.round(Number(totalSessionDurationMs) || 0)
   };
 
-  // Si el frontend envía un UUID explícito, lo conservamos como clave primaria
-  if (targetId && UUID_REGEX.test(targetId)) {
-    sessionRow.id = targetId;
+  if (!supabase) {
+    console.warn("[Telemetry] Cliente Supabase no configurado. Continuando sin persistencia.");
+    return { id: targetId };
   }
 
-  const { data: inserted, error } = await supabase
-    .from("triage_sessions")
-    .insert([sessionRow])
-    .select("id")
-    .single();
+  try {
+    // upsert evita la colisión de clave primaria (23505) si el ID ya existe
+    const { data: result, error } = await supabase
+      .from("triage_sessions")
+      .upsert(sessionRow, { onConflict: "id" })
+      .select("id")
+      .single();
 
-  if (error) {
-    console.error(`[Supabase Error] Fallo al insertar triage_session: ${error.message} (Código: ${error.code})`);
-    throw new Error(`Error en triage_sessions: ${error.message}`);
+    if (error) {
+      console.warn(`[Supabase Warning] No se pudo persistir triage_session (${error.message}). Flujo no interrumpido.`);
+      return { id: targetId };
+    }
+
+    return result || { id: targetId };
+  } catch (err) {
+    console.warn(`[Supabase Error] Excepción en triage_sessions: ${err.message}. Continuando triaje.`);
+    return { id: targetId };
   }
-
-  return inserted;
 }
 
 // ============================================================================
 // 2. REGISTRAR INYECCIÓN EN EDITOR (Telemetría Human-in-the-Loop)
 // ============================================================================
 export async function logFeedbackInjection(data = {}) {
-  if (!supabase) {
-    console.warn("[Telemetry] Cliente Supabase no inicializado.");
-    throw new Error("Cliente de base de datos no configurado.");
-  }
-
   const {
     sessionId,
     certaintyLevel,
@@ -75,10 +77,9 @@ export async function logFeedbackInjection(data = {}) {
     finalGrade
   } = data;
 
-  // session_id en Supabase es tipo UUID vinculado a triage_sessions
   if (!sessionId || !UUID_REGEX.test(sessionId)) {
-    console.error(`[Supabase Error] sessionId inválido o ausente: "${sessionId}". Debe ser un UUID registrado.`);
-    throw new Error(`sessionId inválido o ausente (${sessionId}).`);
+    console.warn(`[Supabase Warning] sessionId inválido ("${sessionId}"). Telemetría de inyección omitida.`);
+    return { id: null };
   }
 
   const injectionRow = {
@@ -96,29 +97,33 @@ export async function logFeedbackInjection(data = {}) {
       : null
   };
 
-  const { data: inserted, error } = await supabase
-    .from("feedback_injections")
-    .insert([injectionRow])
-    .select("id")
-    .single();
-
-  if (error) {
-    console.error(`[Supabase Error] Fallo al insertar feedback_injection: ${error.message} (Código: ${error.code})`);
-    throw new Error(`Error en feedback_injections: ${error.message}`);
+  if (!supabase) {
+    return { id: null };
   }
 
-  return inserted;
+  try {
+    const { data: inserted, error } = await supabase
+      .from("feedback_injections")
+      .insert([injectionRow])
+      .select("id")
+      .single();
+
+    if (error) {
+      console.warn(`[Supabase Warning] Fallo en feedback_injections: ${error.message}`);
+      return { id: null };
+    }
+
+    return inserted;
+  } catch (err) {
+    console.warn(`[Supabase Error] Excepción en feedback_injections: ${err.message}`);
+    return { id: null };
+  }
 }
 
 // ============================================================================
 // 3. REGISTRAR INTERACCIÓN DEL CHAT (Soporte conceptual)
 // ============================================================================
 export async function logChatInteraction(data = {}) {
-  if (!supabase) {
-    console.warn("[Telemetry] Cliente Supabase no inicializado.");
-    throw new Error("Cliente de base de datos no configurado.");
-  }
-
   const {
     teacherId = "docente-local",
     conceptContext = "general",
@@ -135,16 +140,25 @@ export async function logChatInteraction(data = {}) {
     response_duration_ms: Math.round(Number(responseDurationMs) || 0)
   };
 
-  const { data: inserted, error } = await supabase
-    .from("chat_interactions")
-    .insert([chatRow])
-    .select("id")
-    .single();
-
-  if (error) {
-    console.error(`[Supabase Error] Fallo al insertar chat_interaction: ${error.message} (Código: ${error.code})`);
-    throw new Error(`Error en chat_interactions: ${error.message}`);
+  if (!supabase) {
+    return { id: null };
   }
 
-  return inserted;
+  try {
+    const { data: inserted, error } = await supabase
+      .from("chat_interactions")
+      .insert([chatRow])
+      .select("id")
+      .single();
+
+    if (error) {
+      console.warn(`[Supabase Warning] Fallo en chat_interactions: ${error.message}`);
+      return { id: null };
+    }
+
+    return inserted;
+  } catch (err) {
+    console.warn(`[Supabase Error] Excepción en chat_interactions: ${err.message}`);
+    return { id: null };
+  }
 }

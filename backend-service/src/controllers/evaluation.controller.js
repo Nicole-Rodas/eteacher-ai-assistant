@@ -2,10 +2,16 @@ import { ETEACHER_CONCEPTS, detectConcept } from "../config/concepts.js";
 import { buildEvaluationPrompt } from "../services/prompt-builder.js";
 import { generateFormativeFeedback } from "../services/gemini-service.js";
 
+// ============================================================================
+// 1. LISTADO DE CONCEPTOS DISPONIBLES
+// ============================================================================
 export function getConcepts(req, res) {
   return res.json({ ok: true, concepts: ETEACHER_CONCEPTS });
 }
 
+// ============================================================================
+// 2. EVALUACIÓN Y TRIAJE DE ENTREGA DE ESTUDIANTE
+// ============================================================================
 export async function analyzeSubmission(req, res) {
   try {
     const {
@@ -20,7 +26,12 @@ export async function analyzeSubmission(req, res) {
     } = req.body;
 
     const cleanCode = String(studentCode || "").trim();
-    const hasCanvas = Boolean(canvasImage && String(canvasImage).length > 0);
+    const hasCanvas = Boolean(
+      canvasImage && 
+      typeof canvasImage === "string" && 
+      canvasImage.trim().length > 30 &&
+      canvasImage !== "[DIAGRAMA_EN_CANVAS]"
+    );
 
     if (!cleanCode && !hasCanvas) {
       return res.status(400).json({
@@ -33,7 +44,7 @@ export async function analyzeSubmission(req, res) {
     const concept = detectConcept(unitTitle, conceptId);
     const targetLang = (userLangCode || lang || "es").toLowerCase();
 
-    // Caso borde: entrega de texto demasiado corta sin diagrama visual
+    // Caso borde: entrega de texto demasiado corta sin diagrama visual en canvas
     if (!hasCanvas && cleanCode.length < 5) {
       return res.json({
         ok: true,
@@ -67,7 +78,7 @@ export async function analyzeSubmission(req, res) {
 
     const aiResponse = await generateFormativeFeedback({
       promptText: prompt,
-      canvasImage: canvasImage || null
+      canvasImage: hasCanvas ? canvasImage : null
     });
 
     return res.json({
