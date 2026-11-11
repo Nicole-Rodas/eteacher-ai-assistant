@@ -3,15 +3,15 @@ import { getActiveApiKey, rotateApiKey, getKeyCount } from "../config/gemini-key
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-// Fallbacks de emergencia ordenados por la prioridad solicitada (sin series 2.5 ni obsoletas)
+// Fallbacks de emergencia con gemini-flash-latest primero y 3.8 al final
 const EMERGENCY_FALLBACKS = [
-  "gemini-3.8-flash",
+  "gemini-flash-latest",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash",
-  "gemini-flash-latest",
-  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
   "gemini-flash-lite-latest",
+  "gemini-3.5-flash-lite",
   "gemini-pro-latest"
 ];
 
@@ -52,7 +52,7 @@ export async function fetchAvailableModels() {
         const name = (m.name || "").toLowerCase();
         const supportsGenerate = methods.includes("generateContent");
 
-        // Excluir descontinuados (2.5, 1.0, etc.) e incompatibles con JSON/código
+        // Excluir descontinuados e incompatibles con JSON/código
         const isUnsupported =
           name.includes("2.5") ||
           name.includes("1.0") ||
@@ -77,16 +77,16 @@ export async function fetchAvailableModels() {
       throw new Error("El filtrado no arrojó modelos compatibles.");
     }
 
-    // Ordenamiento jerárquico según la prioridad establecida
+    // Ordenamiento: gemini-flash-latest primero, luego 3.7, 3.6, 3.5, y 3.8 al fondo de los flash
     validTextModels.sort((a, b) => {
       const getScore = (name) => {
         const n = name.toLowerCase();
-        if (n.includes("3.8-flash")) return 150;
+        if (n === "gemini-flash-latest") return 150;
         if (n.includes("3.7-flash")) return 140;
         if (n.includes("3.6-flash")) return 130;
         if (n.includes("3.5-flash") && !n.includes("lite")) return 120;
-        if (n === "gemini-flash-latest") return 110;
-        if (n.includes("3-flash")) return 100;
+        if (n.includes("3.8-flash")) return 95; // Bajado deliberadamente por alta demanda
+        if (n.includes("3-flash")) return 90;
         if (n.includes("flash-lite") || n.includes("lite")) return 80;
         if (n.includes("pro-latest")) return 70;
         if (n.includes("pro")) return 60;

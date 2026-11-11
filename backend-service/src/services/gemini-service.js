@@ -17,17 +17,29 @@ function cleanJsonString(raw) {
     .trim();
 }
 
-function isRateLimitOrUnavailable(error) {
+// Determina si el error es estrictamente agotamiento de cuota de la API key (429)
+function isQuotaExhausted(error) {
   const errStr = String(error?.message || "").toLowerCase();
   const status = error?.status || error?.statusCode;
 
   return (
     status === 429 ||
-    status === 503 ||
     errStr.includes("429") ||
-    errStr.includes("503") ||
     errStr.includes("resource_exhausted") ||
     errStr.includes("quota")
+  );
+}
+
+// Determina si el modelo está saturado en Google (503 Service Unavailable)
+function isModelOverloaded(error) {
+  const errStr = String(error?.message || "").toLowerCase();
+  const status = error?.status || error?.statusCode;
+
+  return (
+    status === 503 ||
+    errStr.includes("503") ||
+    errStr.includes("service unavailable") ||
+    errStr.includes("high demand")
   );
 }
 
@@ -37,7 +49,8 @@ function isRotatableError(error) {
   const status = error?.status || error?.statusCode;
 
   return (
-    isRateLimitOrUnavailable(error) ||
+    isQuotaExhausted(error) ||
+    isModelOverloaded(error) ||
     status === 404 ||
     (status === 400 && (errStr.includes("image") || errStr.includes("modality") || errStr.includes("not enabled"))) ||
     errStr.includes("404") ||
@@ -51,14 +64,18 @@ function isRotatableError(error) {
 }
 
 function handleRotation(error) {
-  // Si la clave se quedó sin cuota (429/503) y tenemos más llaves disponibles, rotar API Key de inmediato
-  if (isRateLimitOrUnavailable(error) && getKeyCount() > 1) {
-    console.warn(`[Gemini Service] Saturación de cuota detectada. Rotando API Key...`);
+  // Si SOLO la llave se quedó sin cuota (429), rotar API Key
+  if (isQuotaExhausted(error) && getKeyCount() > 1) {
+    console.warn(`[Gemini Service] Cuota 429 agotada en credencial actual. Rotando API Key...`);
     rotateApiKey();
-  } else {
-    // Si es error de modelo (404, modalidad incompatible, o sólo tenemos 1 llave), rotar modelo
-    rotateModel();
+    return;
   }
+
+  // Si es 503 (servidor saturado/high demand), 404, modalidad incompatible, etc., rotar MODELO de inmediato
+  if (isModelOverloaded(error)) {
+    console.warn(`[Gemini Service] Modelo saturado en Google (503 High Demand). Rotando inmediatamente de modelo...`);
+  }
+  rotateModel();
 }
 
 export async function generateFormativeFeedback(inputData) {
@@ -97,7 +114,6 @@ export async function generateFormativeFeedback(inputData) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let modelName = getCurrentModelName();
 
-    // Si la entrega incluye canvas y el modelo actual no soporta visión, avanzar modelo
     if (hasImage && (modelName.includes("transcribe") || modelName.includes("embedding") || modelName.includes("text-"))) {
       console.warn(`[Gemini Triaje] El modelo [${modelName}] no soporta visión. Rotando modelo...`);
       rotateModel();
@@ -132,7 +148,7 @@ export async function generateFormativeFeedback(inputData) {
       if (isRotatableError(error) && attempt < maxAttempts) {
         console.warn(`[Gemini Triaje] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}).`);
         handleRotation(error);
-        await sleep(600);
+        await sleep(500);
         continue;
       }
 
@@ -185,7 +201,7 @@ export async function generateChatResponse(systemPrompt, messages = []) {
       if (isRotatableError(error) && attempt < maxAttempts) {
         console.warn(`[Gemini Chat] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}).`);
         handleRotation(error);
-        await sleep(600);
+        await sleep(500);
         continue;
       }
 
