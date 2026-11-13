@@ -345,7 +345,7 @@ window.ETeacherUI = {
 
       window.ETeacherTelemetry.logSession({
         id: this.currentSessionId,
-        teacherId: "docente-local",
+        teacherId: "auxiliar-1",
         unitTitle: this.activeExercise?.unitTitle || "Sin título",
         conceptId: this.activeExercise?.conceptId || "general",
         totalStudents: this.rowsData.length,

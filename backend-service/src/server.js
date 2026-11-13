@@ -13,7 +13,30 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Lista blanca de orígenes autorizados (sin barra final '/')
+const allowedOrigins = [
+  "https://programino.eteacher.be",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Permitir peticiones sin origen (keep-alive / health checks) o desde la extensión de Chrome
+      if (!origin || origin.startsWith("chrome-extension://")) {
+        return callback(null, true);
+      }
+
+      // Permitir solo si proviene de Programino eTeacher
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Bloqueado por política CORS: Origen no autorizado"));
+    },
+    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 // Aumentar límites para soportar payloads grandes de diagramas en Base64 sin cortar la conexión
 app.use(express.json({ limit: "50mb" }));
