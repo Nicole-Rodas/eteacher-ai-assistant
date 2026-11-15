@@ -1,6 +1,6 @@
 window.ETeacherTelemetry = {
   // Si estás en desarrollo local usa localhost:5000 o 3000; si estás usando el servicio en la nube, pon tu URL de Render:
-  ENDPOINT_BASE: "https://eteacher-backend.onrender.com/api/telemetry",
+  ENDPOINT_BASE: "https://eateacher.zer4c.dev/api/telemetry",
 
   async logSession(payload) {
     try {

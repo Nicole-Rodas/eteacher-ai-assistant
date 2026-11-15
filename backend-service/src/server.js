@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 3000;
 
 // Lista blanca de orígenes autorizados (sin barra final '/')
 const allowedOrigins = [
-  "https://programino.eteacher.be",
+  "[https://programino.eteacher.be](https://programino.eteacher.be)"
 ];
 
 app.use(
@@ -34,7 +34,7 @@ app.use(
       return callback(new Error("Bloqueado por política CORS: Origen no autorizado"));
     },
     methods: ["GET", "POST", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
 
@@ -56,6 +56,10 @@ app.use("/api", evaluationRoutes);
 app.use("/api/evaluation", evaluationRoutes);
 app.use("/api/chat", chatRoutes);
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend eTeacher AI corriendo en http://localhost:${PORT}`);
 });
+
+// Evitar cortes prematuros de sockets keep-alive detrás de proxies inversos (Nginx/Cloudflare)
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;

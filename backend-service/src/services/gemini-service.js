@@ -6,6 +6,7 @@ import {
 } from "../clients/gemini-registry.js";
 import { rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
+const REQUEST_TIMEOUT_MS = 18000; // 18 segundos máximo por intento
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function cleanJsonString(raw) {
@@ -41,11 +42,14 @@ function isModelOverloaded(error) {
 }
 
 function isRotatableError(error) {
+  const errName = String(error?.name || "");
   const errStr = String(error?.message || "").toLowerCase();
   const causeCode = String(error?.cause?.code || "");
   const status = error?.status || error?.statusCode;
 
   return (
+    errName === "TimeoutError" ||
+    errName === "AbortError" ||
     isQuotaExhausted(error) ||
     isModelOverloaded(error) ||
     status === 404 ||
@@ -55,6 +59,7 @@ function isRotatableError(error) {
     errStr.includes("unsupported modality") ||
     errStr.includes("fetch failed") ||
     errStr.includes("timeout") ||
+    errStr.includes("aborted") ||
     causeCode.includes("ECONNRESET") ||
     causeCode.includes("UND_ERR")
   );
@@ -62,13 +67,13 @@ function isRotatableError(error) {
 
 function handleRotation(error) {
   if (isQuotaExhausted(error) && getKeyCount() > 1) {
-    console.warn(`[Gemini Service] Cuota 429 agotada. Rotando API Key...`);
+    console.warn("[Gemini Service] Cuota 429 agotada. Rotando API Key...");
     rotateApiKey();
     return;
   }
 
   if (isModelOverloaded(error)) {
-    console.warn(`[Gemini Service] Modelo saturado (503 High Demand). Rotando modelo inmediatamente...`);
+    console.warn("[Gemini Service] Modelo saturado (503 High Demand). Rotando modelo inmediatamente...");
   }
   rotateModel();
 }
@@ -118,11 +123,14 @@ export async function generateFormativeFeedback(inputData) {
         model: modelName,
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0.2 // Acelera drásticamente la generación del JSON
+          temperature: 0.2
         }
       });
 
-      const result = await model.generateContent(parts);
+      const result = await model.generateContent(
+        { contents: [{ role: "user", parts }] },
+        { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
+      );
       const rawText = result.response.text();
 
       console.log(`[Gemini Triaje] Evaluación exitosa con [${modelName}].`);
@@ -178,7 +186,10 @@ export async function generateChatResponse(systemPrompt, messages = []) {
       });
 
       const chatSession = model.startChat({ history: geminiHistory });
-      const result = await chatSession.sendMessage(lastMessage);
+      const result = await chatSession.sendMessage(
+        lastMessage,
+        { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
+      );
       const rawText = result.response.text();
 
       console.log(`[Gemini Chat] Respuesta exitosa con [${modelName}].`);

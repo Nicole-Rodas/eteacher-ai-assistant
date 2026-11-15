@@ -167,7 +167,7 @@ window.ETeacherChat = {
         : "general";
 
       // 1. Llamada al backend en Render
-      const response = await fetch("https://eteacher-backend.onrender.com/api/chat", {
+      const response = await fetch("https://eateacher.zer4c.dev/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

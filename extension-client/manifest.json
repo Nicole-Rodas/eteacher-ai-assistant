@@ -9,7 +9,7 @@
   ],
   "host_permissions": [
     "https://programino.eteacher.be/*",
-    "https://*.onrender.com/*"
+    "https://eateacher.zer4c.dev/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js"

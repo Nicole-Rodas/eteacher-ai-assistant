@@ -1,8 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getActiveApiKey, rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora exacta
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
 
+// Modelos activos y de baja latencia (excluye 3.8 por latencia alta)
 const EMERGENCY_FALLBACKS = [
   "gemini-flash-latest",
   "gemini-3.7-flash",
@@ -16,7 +17,7 @@ let cachedModels = [...EMERGENCY_FALLBACKS];
 let currentModelIndex = 0;
 let isUpdating = false;
 
-// Reutilización de sockets HTTP/2 por clave
+// Reutilización de clientes por clave API
 const clientCache = new Map();
 
 export function getClient() {
@@ -28,42 +29,37 @@ export function getClient() {
 }
 
 export function getCurrentModelName() {
-  return cachedModels[currentModelIndex] || cachedModels[0];
+  return cachedModels[currentModelIndex] || EMERGENCY_FALLBACKS[0];
 }
 
 export function rotateModel() {
   currentModelIndex = (currentModelIndex + 1) % cachedModels.length;
-  console.warn(`[Gemini Registry] 🔄 Rotando a modelo: [${cachedModels[currentModelIndex]}]`);
+  console.warn(`[Gemini Registry] Rotando a modelo: [${cachedModels[currentModelIndex]}]`);
 
   if (currentModelIndex === 0 && getKeyCount() > 1) {
     rotateApiKey();
   }
 }
 
+// Máximo 4 intentos rápidos para evitar bucles largos ante fallos de red
 export function getMaxRotationAttempts() {
-  return Math.min(cachedModels.length * getKeyCount(), 10);
+  return Math.min(cachedModels.length * getKeyCount(), 4);
 }
 
-// Devuelve la lista en memoria al instante (0 ms de bloqueo para el triaje/chat)
 export async function fetchAvailableModels() {
   return cachedModels;
 }
 
-// Tarea en segundo plano para actualizar el catálogo dinámico desde Google
 async function refreshModelsCatalogInBackground() {
   if (isUpdating) return;
   isUpdating = true;
 
   const apiKey = getActiveApiKey();
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
-      { signal: controller.signal }
+      { signal: AbortSignal.timeout(4000) }
     );
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -78,9 +74,14 @@ async function refreshModelsCatalogInBackground() {
         const name = (m.name || "").toLowerCase();
         const supportsGenerate = methods.includes("generateContent");
 
-        const isUnsupported =
+        const isExcluded =
+          name.includes("3.8") || // Excluido por alta latencia en evaluación por lotes
           name.includes("2.5") ||
+          name.includes("2.0") ||
+          name.includes("1.5") ||
           name.includes("1.0") ||
+          name.includes("pro") ||
+          name.includes("thinking") ||
           name.includes("embedding") ||
           name.includes("aqa") ||
           name.includes("tts") ||
@@ -91,10 +92,9 @@ async function refreshModelsCatalogInBackground() {
           name.includes("banana") ||
           name.includes("argon") ||
           name.includes("carbon") ||
-          name.includes("customtools") ||
-          name.includes("thinking");
+          name.includes("customtools");
 
-        return supportsGenerate && name.includes("gemini") && !isUnsupported;
+        return supportsGenerate && name.includes("gemini") && !isExcluded;
       })
       .map((m) => m.name.replace(/^models\//, ""));
 
@@ -103,13 +103,11 @@ async function refreshModelsCatalogInBackground() {
         const getScore = (name) => {
           const n = name.toLowerCase();
           if (n === "gemini-flash-latest") return 150;
-          if (n.includes("3.7-flash")) return 140;
-          if (n.includes("3.6-flash")) return 130;
+          if (n.includes("3.7-flash") && !n.includes("lite")) return 140;
+          if (n.includes("3.6-flash") && !n.includes("lite")) return 130;
           if (n.includes("3.5-flash") && !n.includes("lite")) return 120;
-          if (n.includes("3.8-flash")) return 95;
-          if (n.includes("3-flash")) return 90;
-          if (n.includes("flash-lite") || n.includes("lite")) return 80;
-          if (n.includes("pro-latest")) return 70;
+          if (n === "gemini-flash-lite-latest") return 110;
+          if (n.includes("lite")) return 100;
           return 40;
         };
         return getScore(b) - getScore(a);
@@ -117,30 +115,15 @@ async function refreshModelsCatalogInBackground() {
 
       cachedModels = validTextModels;
       currentModelIndex = 0;
-      console.log("[Gemini Registry] 🔄 Catálogo actualizado en segundo plano:", cachedModels);
+      console.log("[Gemini Registry] Catálogo Flash rápido actualizado:", cachedModels);
     }
   } catch (error) {
-    console.warn(`[Gemini Registry] Consulta horaria de modelos no completada (${error.message}). Se mantiene la lista actual.`);
+    console.warn(`[Gemini Registry] Catálogo no actualizado (${error.message}). Se mantienen los fallbacks.`);
   } finally {
     isUpdating = false;
   }
 }
 
-// 1. Warm-up y primer chequeo dinámico al arrancar en background
-setTimeout(async () => {
-  try {
-    const modelName = getCurrentModelName();
-    const client = getClient();
-    const model = client.getGenerativeModel({ model: modelName });
-    await model.generateContent("ping");
-    console.log(`[Gemini Registry] ✅ Modelo inicial verificado: [${modelName}]`);
-  } catch (err) {
-    console.warn(`[Gemini Registry] Warmup inicial: ${err.message}`);
-  }
-
-  // Refresca catálogo dinámico por primera vez sin estorbar el arranque
-  refreshModelsCatalogInBackground();
-}, 500);
-
-// 2. Programador estricto para ejecutarse únicamente cada 1 hora
+// Actualiza únicamente la lista de modelos en segundo plano sin consumir tokens de inferencia
+setTimeout(refreshModelsCatalogInBackground, 200);
 setInterval(refreshModelsCatalogInBackground, CACHE_TTL_MS);
