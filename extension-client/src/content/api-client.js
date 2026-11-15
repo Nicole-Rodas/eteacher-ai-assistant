@@ -9,17 +9,58 @@ window.ETeacherClient = {
     const hasCanvas = Boolean(canvasImage && String(canvasImage).length > 0);
     const activeLang = window.ETeacherI18n?.detectLanguage ? window.ETeacherI18n.detectLanguage() : "es";
 
+    const localStrings = {
+      es: {
+        blankJust: "Sin respuesta ni diagrama registrado en la plataforma.",
+        blankText: "Entrega en blanco.",
+        shortJust: `Respuesta recibida ("${cleanAnswer}") consta de muy pocos caracteres.`,
+        shortText: "Entrega demasiado corta.",
+        evalDefault: "Evaluado con IA.",
+        allPrefix: (c, s, m) => `Correctiva: ${c}\nSocrática: ${s}\nMotivacional: ${m}`,
+        errUnavail: (err) => `Servicio IA no disponible (${err}). Requiere revisión manual.`
+      },
+      en: {
+        blankJust: "No answer or diagram submitted on the platform.",
+        blankText: "Blank submission.",
+        shortJust: `Received answer ("${cleanAnswer}") has too few characters.`,
+        shortText: "Submission too short.",
+        evalDefault: "Evaluated by AI.",
+        allPrefix: (c, s, m) => `Corrective: ${c}\nSocratic: ${s}\nMotivational: ${m}`,
+        errUnavail: (err) => `AI service unavailable (${err}). Manual review required.`
+      },
+      fr: {
+        blankJust: "Aucune réponse ni diagramme enregistré sur la plateforme.",
+        blankText: "Soumission vide.",
+        shortJust: `La réponse reçue (« ${cleanAnswer} ») contient trop peu de caractères.`,
+        shortText: "Soumission trop courte.",
+        evalDefault: "Évalué par l'IA.",
+        allPrefix: (c, s, m) => `Corrective : ${c}\nSocratique : ${s}\nMotivationnelle : ${m}`,
+        errUnavail: (err) => `Service IA indisponible (${err}). Révision manuelle requise.`
+      },
+      nl: {
+        blankJust: "Geen antwoord of diagram geregistreerd op het platform.",
+        blankText: "Lege inzending.",
+        shortJust: `Ontvangen antwoord ("${cleanAnswer}") bevat te weinig tekens.`,
+        shortText: "Inzending te kort.",
+        evalDefault: "Geëvalueerd door AI.",
+        allPrefix: (c, s, m) => `Corrigerend: ${c}\nSocratisch: ${s}\nMotiverend: ${m}`,
+        errUnavail: (err) => `AI-service niet beschikbaar (${err}). Handmatige controle vereist.`
+      }
+    };
+
+    const str = localStrings[activeLang] || localStrings.en;
+
     if (!cleanAnswer && !hasCanvas) {
       return {
         certaintyLevel: "BAJA",
         certaintyScore: 100,
         nota: 0,
-        justificacion: activeLang === "en" ? "No answer or diagram submitted." : "Sin respuesta ni diagrama registrado en la plataforma.",
+        justificacion: str.blankJust,
         layers: {
-          correctiva: activeLang === "en" ? "Blank submission." : "Entrega en blanco.",
-          socratica: activeLang === "en" ? "Blank submission." : "Entrega en blanco.",
-          motivacional: activeLang === "en" ? "Blank submission." : "Entrega en blanco.",
-          completa: activeLang === "en" ? "Blank submission." : "Entrega en blanco."
+          correctiva: str.blankText,
+          socratica: str.blankText,
+          motivacional: str.blankText,
+          completa: str.blankText
         }
       };
     }
@@ -29,14 +70,12 @@ window.ETeacherClient = {
         certaintyLevel: "BAJA",
         certaintyScore: 80,
         nota: 10,
-        justificacion: activeLang === "en"
-          ? `Received answer ("${cleanAnswer}") has too few characters.`
-          : `Respuesta recibida ("${cleanAnswer}") consta de muy pocos caracteres.`,
+        justificacion: str.shortJust,
         layers: {
-          correctiva: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta.",
-          socratica: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta.",
-          motivacional: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta.",
-          completa: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta."
+          correctiva: str.shortText,
+          socratica: str.shortText,
+          motivacional: str.shortText,
+          completa: str.shortText
         }
       };
     }
@@ -81,31 +120,28 @@ window.ETeacherClient = {
       return {
         certaintyLevel: (d.certeza && d.certeza.nivel ? d.certeza.nivel : "MEDIA").toUpperCase(),
         certaintyScore: d.certeza && d.certeza.porcentaje !== undefined ? d.certeza.porcentaje : 75,
-        justificacion: (d.certeza && d.certeza.justificacion_docente) ? d.certeza.justificacion_docente : "Evaluado con IA.",
+        justificacion: (d.certeza && d.certeza.justificacion_docente) ? d.certeza.justificacion_docente : str.evalDefault,
         nota: d.calificacion_sugerida !== undefined ? d.calificacion_sugerida : 70,
         layers: {
           correctiva: c,
           socratica: s,
           motivacional: m,
-          completa: activeLang === "en"
-            ? `Corrective: ${c}\nSocratic: ${s}\nMotivational: ${m}`
-            : `Correctiva: ${c}\nSocrática: ${s}\nMotivacional: ${m}`
+          completa: str.allPrefix(c, s, m)
         }
       };
     }
 
-    // Contingencia local si no hay respuesta del servidor
-    const preview = cleanAnswer.length > 60 ? cleanAnswer.substring(0, 60) + "..." : (cleanAnswer || "[DIAGRAMA_EN_CANVAS]");
+    const errorReason = backendResponse?.error || "HTTP 500";
     return {
-      certaintyLevel: "ALTA",
-      certaintyScore: 88,
-      nota: 85,
-      justificacion: `Respuesta capturada (${hasCanvas ? "Diagrama canvas" : cleanAnswer.length + " caracteres"}).`,
+      certaintyLevel: "BAJA",
+      certaintyScore: 0,
+      nota: 0,
+      justificacion: str.errUnavail(errorReason),
       layers: {
-        correctiva: `Revisa la estructura de tu planteamiento ("${preview}") para asegurar que cubre los casos borde.`,
-        socratica: `Sobre tu solución ("${preview}"): ¿cómo se comportaría si los datos de entrada cambian de rango?`,
-        motivacional: `Buen acercamiento inicial en "${preview}". Continúa refinando la lógica del algoritmo.`,
-        completa: `Respuesta: "${preview}". Buen punto de partida; revisa el flujo para casos extremos.`
+        correctiva: "",
+        socratica: "",
+        motivacional: "",
+        completa: ""
       }
     };
   }

@@ -1,7 +1,14 @@
-/**
- * Constructor de Prompts Pedagógicos para eTeacher AI
- * Basado en la taxonomía didáctica: Correctiva, Socrática y Motivacional.
- */
+
+function getStrictLanguageDirective(langCode = "es") {
+  const code = String(langCode || "es").substring(0, 2).toLowerCase();
+  const directives = {
+    es: "REGLA CRÍTICA DE IDIOMA: Redacta TODOS los valores de texto del JSON rigurosamente en ESPAÑOL, sin importar el idioma del enunciado o del código del estudiante.",
+    en: "CRITICAL LANGUAGE RULE: Write ALL JSON string values strictly in ENGLISH, regardless of the language used in the problem statement or student code.",
+    fr: "RÈGLE DE LANGUE CRITIQUE : Rédige TOUTES les valeurs textuelles du JSON strictement en FRANÇAIS, quelle que soit la langue de l'énoncé ou du code de l'étudiant.",
+    nl: "KRITIEKE TAALREGEL: Schrijf ALLE tekstwaarden in de JSON strikt in het NEDERLANDS, ongeacht de taal van de opgave of de code van de student."
+  };
+  return directives[code] || directives.en;
+}
 
 export function buildEvaluationPrompt({
   unitTitle,
@@ -13,6 +20,7 @@ export function buildEvaluationPrompt({
   hasCanvas = false
 }) {
   const isVisualDiagram = hasCanvas || String(studentCode || "").includes("[DIAGRAMA_EN_CANVAS]");
+  const langDirective = getStrictLanguageDirective(targetLang);
 
   const deliveryContext = isVisualDiagram
     ? `MODALIDAD DE ENTREGA: Diagrama Gráfico / Visual (Adjunto en Imagen)
@@ -35,9 +43,11 @@ ${studentCode || "[SIN ENTREGA REGISTRADA]"}
 Eres un asistente pedagógico experto en enseñanza de Introducción a la Programación y Pensamiento Computacional.
 Tu objetivo es generar un borrador de retroalimentación formativa estructurada para el docente bajo el paradigma Human-in-the-Loop.
 
+${langDirective}
+
 REGLAS PEDAGÓGICAS ESTRICTAS:
 1. NUNCA resuelvas ni regales el código resuelto al estudiante. Tu función es orientar su razonamiento cognitivo.
-2. Todo el contenido generado DEBE redactarse rigurosamente en el idioma correspondiente a este código: "${targetLang}".
+2. ${langDirective}
 3. Ignora errores ortográficos o sintaxis informal; evalúa la comprensión algorítmica y estructural de fondo.
 
 === CONTEXTO CURRICULAR ===
@@ -64,34 +74,37 @@ ${deliveryContext}
 ${rubricClarity}
 
 === INSTRUCCIONES DE SALIDA ===
-Devuelve ÚNICAMENTE un objeto JSON válido. Las llaves deben mantenerse idénticas a la especificación, con sus valores redactados en "${targetLang}":
+Devuelve ÚNICAMENTE un objeto JSON válido. Mantén las claves en español tal como se especifican, pero escribe TODOS los valores de texto en el idioma "${targetLang}" (${langDirective}):
 
 {
   "concepto_aplicado": "${concept?.title || "Concepto Principal"}",
   "certeza": {
     "nivel": "ALTA",
     "porcentaje": 85,
-    "justificacion_docente": "<explicación breve de 1 línea sobre el nivel asignado>"
+    "justificacion_docente": "<explicación breve de 1 línea en ${targetLang} sobre el nivel asignado>"
   },
   "calificacion_sugerida": 75,
   "retroalimentacion": {
-    "correctiva": "<identifica aciertos o fallos conceptuales específicos y orienta cómo subsanarlos sin dar la solución directa>",
-    "socratica": "<formula preguntas abiertas y reflexivas que induzcan al estudiante a razonar sobre el funcionamiento de su solución>",
-    "motivacional": "<refuerzo positivo y asertivo que reconozca el esfuerzo y anime al estudiante a continuar perfeccionando su lógica>"
+    "correctiva": "<en ${targetLang}: identifica aciertos o fallos conceptuales específicos y orienta cómo subsanarlos sin dar la solución directa>",
+    "socratica": "<en ${targetLang}: formula preguntas abiertas y reflexivas que induzcan al estudiante a razonar sobre el funcionamiento de su solución>",
+    "motivacional": "<en ${targetLang}: refuerzo positivo y asertivo que reconozca el esfuerzo y anime al estudiante a continuar perfeccionando su lógica>"
   }
 }
 `.trim();
 }
 
 export function buildChatSystemPrompt(userLangCode = "es") {
+  const langDirective = getStrictLanguageDirective(userLangCode);
   return `
-Eres un tutor de programación empático, claro y pedagógico. 
+Eres un tutor de programación empático, claro y pedagógico.
 Tu objetivo es explicar definiciones, lógica computacional y sintaxis mediante analogías simples y orientación paso a paso.
+
+${langDirective}
 
 REGLAS ESTRICTAS:
 1. NUNCA resuelvas un ejercicio completo ni entregues el bloque de código final.
 2. Si te piden resolver un problema, explica la estructura conceptual o el algoritmo y guía al estudiante para que sea él quien escriba la implementación.
 3. Sé conciso y directo (1 a 3 párrafos como máximo).
-4. Tolera cualquier falta de ortografía o redacción informal del usuario. Responde SIEMPRE y ÚNICAMENTE en el idioma correspondiente a este código ISO: "${userLangCode}".
+4. Tolera cualquier falta de ortografía o redacción informal del usuario. Responde SIEMPRE y ÚNICAMENTE en el idioma "${userLangCode}".
 `.trim();
 }
