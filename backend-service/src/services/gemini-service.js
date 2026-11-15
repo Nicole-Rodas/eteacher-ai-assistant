@@ -66,14 +66,10 @@ function isRotatableError(error) {
 }
 
 function handleRotation(error) {
-  if (isQuotaExhausted(error) && getKeyCount() > 1) {
-    console.warn("[Gemini Service] Cuota 429 agotada. Rotando API Key...");
-    rotateApiKey();
-    return;
-  }
-
-  if (isModelOverloaded(error)) {
-    console.warn("[Gemini Service] Modelo saturado (503 High Demand). Rotando modelo inmediatamente...");
+  if (isQuotaExhausted(error)) {
+    console.warn("[Gemini Service] Cuota 429 agotada. Rotando modelo/clave...");
+  } else if (isModelOverloaded(error)) {
+    console.warn("[Gemini Service] Modelo saturado (503). Rotando modelo inmediatamente...");
   }
   rotateModel();
 }

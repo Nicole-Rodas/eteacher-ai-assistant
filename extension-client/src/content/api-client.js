@@ -7,18 +7,19 @@ window.ETeacherClient = {
   async evaluateSubmission({ exerciseInfo, rawCode, canvasImage }) {
     const cleanAnswer = this.cleanStudentAnswer(rawCode);
     const hasCanvas = Boolean(canvasImage && String(canvasImage).length > 0);
+    const activeLang = window.ETeacherI18n?.detectLanguage ? window.ETeacherI18n.detectLanguage() : "es";
 
     if (!cleanAnswer && !hasCanvas) {
       return {
         certaintyLevel: "BAJA",
         certaintyScore: 100,
         nota: 0,
-        justificacion: "Sin respuesta ni diagrama registrado en la plataforma.",
+        justificacion: activeLang === "en" ? "No answer or diagram submitted." : "Sin respuesta ni diagrama registrado en la plataforma.",
         layers: {
-          correctiva: "Entrega en blanco.",
-          socratica: "Entrega en blanco.",
-          motivacional: "Entrega en blanco.",
-          completa: "Entrega en blanco."
+          correctiva: activeLang === "en" ? "Blank submission." : "Entrega en blanco.",
+          socratica: activeLang === "en" ? "Blank submission." : "Entrega en blanco.",
+          motivacional: activeLang === "en" ? "Blank submission." : "Entrega en blanco.",
+          completa: activeLang === "en" ? "Blank submission." : "Entrega en blanco."
         }
       };
     }
@@ -28,12 +29,14 @@ window.ETeacherClient = {
         certaintyLevel: "BAJA",
         certaintyScore: 80,
         nota: 10,
-        justificacion: `Respuesta recibida ("${cleanAnswer}") consta de muy pocos caracteres.`,
+        justificacion: activeLang === "en"
+          ? `Received answer ("${cleanAnswer}") has too few characters.`
+          : `Respuesta recibida ("${cleanAnswer}") consta de muy pocos caracteres.`,
         layers: {
-          correctiva: "Entrega demasiado corta.",
-          socratica: "Entrega demasiado corta.",
-          motivacional: "Entrega demasiado corta.",
-          completa: "Entrega demasiado corta."
+          correctiva: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta.",
+          socratica: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta.",
+          motivacional: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta.",
+          completa: activeLang === "en" ? "Submission too short." : "Entrega demasiado corta."
         }
       };
     }
@@ -50,7 +53,9 @@ window.ETeacherClient = {
                 problemStatement: exerciseInfo.problemStatement,
                 studentCode: rawCode,
                 conceptId: exerciseInfo.conceptId,
-                canvasImage: canvasImage || null
+                canvasImage: canvasImage || null,
+                userLangCode: activeLang,
+                lang: activeLang
               }
             },
             (res) => {
@@ -82,7 +87,9 @@ window.ETeacherClient = {
           correctiva: c,
           socratica: s,
           motivacional: m,
-          completa: `Correctiva: ${c}\nSocrática: ${s}\nMotivacional: ${m}`
+          completa: activeLang === "en"
+            ? `Corrective: ${c}\nSocratic: ${s}\nMotivational: ${m}`
+            : `Correctiva: ${c}\nSocrática: ${s}\nMotivacional: ${m}`
         }
       };
     }

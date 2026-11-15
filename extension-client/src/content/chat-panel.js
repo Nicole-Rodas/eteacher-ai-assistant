@@ -1,5 +1,5 @@
 window.ETeacherChat = {
-  history: [], 
+  history: [],
   isOpen: false,
 
   ICONS: {
@@ -15,10 +15,11 @@ window.ETeacherChat = {
       return window.ETeacherI18n.getText(key);
     }
     const fallbacks = {
-      "CHAT_TITLE": "Asistente Pedagógico IA",
-      "CHAT_TYPING": "escribiendo",
-      "CHAT_PLACEHOLDER": "Escribe tu consulta aquí...",
-      "CHAT_SEND": "Enviar"
+      CHAT_TITLE: "Asistente Pedagógico IA",
+      CHAT_TYPING: "escribiendo",
+      CHAT_PLACEHOLDER: "Escribe tu consulta aquí...",
+      CHAT_SEND: "Enviar",
+      CHAT_GREETING: "Hola. Soy tu asistente pedagógico. Puedes consultarme dudas conceptuales o pedirme recomendaciones de retroalimentación."
     };
     return fallbacks[key] || key;
   },
@@ -28,6 +29,27 @@ window.ETeacherChat = {
       return window.ETeacherI18n.detectLanguage();
     }
     return "es";
+  },
+
+  refreshLanguage() {
+    const titleSpan = document.getElementById("et-chat-title-text");
+    const inputField = document.getElementById("et-chat-input");
+    const sendBtn = document.getElementById("et-chat-send");
+    const typingText = document.getElementById("et-chat-typing-text");
+
+    if (titleSpan) titleSpan.textContent = this.t("CHAT_TITLE");
+    if (inputField) inputField.placeholder = this.t("CHAT_PLACEHOLDER");
+    if (sendBtn) sendBtn.title = this.t("CHAT_SEND");
+    if (typingText) typingText.textContent = `IA ${this.t("CHAT_TYPING")}`;
+
+    // Si aún no hay mensajes enviados por el usuario, actualiza el saludo al idioma vigente
+    if (this.history.length === 0) {
+      const container = document.getElementById("et-chat-messages");
+      if (container) {
+        container.innerHTML = "";
+        this.addMessage("ai", this.t("CHAT_GREETING"));
+      }
+    }
   },
 
   init() {
@@ -43,7 +65,7 @@ window.ETeacherChat = {
       "<div id=\"et-chat-header\">",
       "  <span style=\"display:flex; align-items:center; gap:8px;\">",
       "    " + this.ICONS.sparkles,
-      "    " + this.t("CHAT_TITLE"),
+      "    <span id=\"et-chat-title-text\">" + this.t("CHAT_TITLE") + "</span>",
       "  </span>",
       "  <button id=\"et-chat-close-btn\" title=\"Cerrar\">",
       "    " + this.ICONS.close,
@@ -51,7 +73,7 @@ window.ETeacherChat = {
       "</div>",
       "<div id=\"et-chat-messages\"></div>",
       "<div id=\"et-chat-typing\">",
-      "  IA " + this.t("CHAT_TYPING") + " <span class=\"et-typing-dots\"></span>",
+      "  <span id=\"et-chat-typing-text\">IA " + this.t("CHAT_TYPING") + "</span> <span class=\"et-typing-dots\"></span>",
       "</div>",
       "<div id=\"et-chat-input-area\">",
       "  <textarea id=\"et-chat-input\" rows=\"1\" placeholder=\"" + this.t("CHAT_PLACEHOLDER") + "\" autocomplete=\"off\"></textarea>",
@@ -77,7 +99,10 @@ window.ETeacherChat = {
     const toggleChat = () => {
       this.isOpen = !this.isOpen;
       wrapper.classList.toggle("et-open", this.isOpen);
-      if (this.isOpen) inputField.focus();
+      if (this.isOpen) {
+        this.refreshLanguage();
+        inputField.focus();
+      }
     };
 
     toggleBtn.addEventListener("click", toggleChat);
@@ -108,7 +133,7 @@ window.ETeacherChat = {
     };
 
     sendBtn.addEventListener("click", handleSend);
-    inputField.addEventListener("keydown", (e) => { 
+    inputField.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
@@ -141,32 +166,22 @@ window.ETeacherChat = {
 
   async sendInitialGreeting() {
     document.getElementById("et-chat-typing").style.display = "block";
-    const userLang = this.getLang();
-
     setTimeout(() => {
       document.getElementById("et-chat-typing").style.display = "none";
-      let saludo = "Hola. Soy tu asistente pedagógico. Puedes consultarme dudas conceptuales o pedirme recomendaciones de retroalimentación.";
-      if (userLang === "en") saludo = "Hello. I am your pedagogical assistant. You can ask conceptual questions or request feedback suggestions.";
-      if (userLang === "fr") saludo = "Bonjour. Je suis votre assistant pédagogique. Vous pouvez me poser des questions conceptuelles ou me demander des suggestions de rétroaction.";
-      if (userLang === "nl") saludo = "Hallo. Ik ben je pedagogisch assistent. Je kunt conceptuele vragen stellen of feedbacksuggesties aanvragen.";
-
-      this.addMessage("ai", saludo);
-    }, 600);
+      this.addMessage("ai", this.t("CHAT_GREETING"));
+    }, 400);
   },
 
   async processAIResponse(userText) {
     document.getElementById("et-chat-typing").style.display = "block";
     this.history.push({ role: "user", content: userText });
 
-    const startTimeMs = Date.now();
-
     try {
       const userLangCode = this.getLang();
-      const currentConceptId = (window.ETeacherUI && window.ETeacherUI.activeExercise) 
-        ? window.ETeacherUI.activeExercise.conceptId 
+      const currentConceptId = (window.ETeacherUI && window.ETeacherUI.activeExercise)
+        ? window.ETeacherUI.activeExercise.conceptId
         : "general";
 
-      // 1. Llamada al backend en Render
       const response = await fetch("https://eateacher.zer4c.dev/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -187,10 +202,6 @@ window.ETeacherChat = {
       document.getElementById("et-chat-typing").style.display = "none";
       this.history.push({ role: "assistant", content: aiText });
       this.addMessage("ai", aiText);
-
-      // NOTA: La telemetría hacia Supabase ya se ejecuta internamente
-      // en el endpoint /api/chat del backend en Render.
-
     } catch (error) {
       document.getElementById("et-chat-typing").style.display = "none";
       this.addErrorNotice("Error de conexión con el tutor IA. Comprueba la conexión con el servidor.");

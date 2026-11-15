@@ -1,30 +1,39 @@
 const BACKEND_URL = "https://eateacher.zer4c.dev/api/evaluation";
+const FETCH_TIMEOUT_MS = 55000; // 55 segundos máximo por entrega
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "ANALYZE_SUBMISSION") {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     fetch(`${BACKEND_URL}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request.payload)
+      body: JSON.stringify(request.payload),
+      signal: controller.signal
     })
-      .then(res => res.json())
-      .then(data => sendResponse(data))
-      .catch(err => sendResponse({
-        ok: false,
-        error: "No se pudo conectar con el Backend local (http://localhost:3000). Verifica que esté corriendo."
-      }));
-    return true; // Mantiene el canal asíncrono abierto
-  }
+      .then(async (res) => {
+        clearTimeout(timeoutId);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return sendResponse({
+            ok: false,
+            error: data.error || `Error HTTP ${res.status} en el servidor de evaluación.`
+          });
+        }
+        return sendResponse(data);
+      })
+      .catch((err) => {
+        clearTimeout(timeoutId);
+        const isTimeout = err?.name === "AbortError";
+        sendResponse({
+          ok: false,
+          error: isTimeout
+            ? "Tiempo de espera agotado al analizar la entrega con la IA."
+            : `No se pudo conectar con el servidor (${BACKEND_URL}).`
+        });
+      });
 
-  if (request.action === "SAVE_FEEDBACK_LOG") {
-    fetch(`${BACKEND_URL}/save-feedback`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request.payload)
-    })
-      .then(res => res.json())
-      .then(data => sendResponse(data))
-      .catch(err => sendResponse({ ok: false, error: err.message }));
-    return true;
+    return true; // Mantiene el canal de mensajes asíncrono abierto en Manifest V3
   }
 });

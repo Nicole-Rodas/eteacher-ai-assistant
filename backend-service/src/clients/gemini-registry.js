@@ -3,7 +3,7 @@ import { getActiveApiKey, rotateApiKey, getKeyCount } from "../config/gemini-key
 
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
 
-// Modelos activos y de baja latencia (excluye 3.8 por latencia alta)
+// Modelos activos de texto/multimodal (excluye 3.8 por latencia y variantes -image)
 const EMERGENCY_FALLBACKS = [
   "gemini-flash-latest",
   "gemini-3.7-flash",
@@ -17,7 +17,6 @@ let cachedModels = [...EMERGENCY_FALLBACKS];
 let currentModelIndex = 0;
 let isUpdating = false;
 
-// Reutilización de clientes por clave API
 const clientCache = new Map();
 
 export function getClient() {
@@ -41,9 +40,8 @@ export function rotateModel() {
   }
 }
 
-// Máximo 4 intentos rápidos para evitar bucles largos ante fallos de red
 export function getMaxRotationAttempts() {
-  return Math.min(cachedModels.length * getKeyCount(), 4);
+  return Math.min(cachedModels.length * getKeyCount(), 6);
 }
 
 export async function fetchAvailableModels() {
@@ -75,13 +73,17 @@ async function refreshModelsCatalogInBackground() {
         const supportsGenerate = methods.includes("generateContent");
 
         const isExcluded =
-          name.includes("3.8") || // Excluido por alta latencia en evaluación por lotes
+          name.includes("image") || // Bloquea gemini-3.1-flash-lite-image (limit: 0)
+          name.includes("3.1") ||
+          name.includes("3.8") ||
           name.includes("2.5") ||
           name.includes("2.0") ||
           name.includes("1.5") ||
           name.includes("1.0") ||
           name.includes("pro") ||
           name.includes("thinking") ||
+          name.includes("omni") ||
+          name.includes("hydrogen") ||
           name.includes("embedding") ||
           name.includes("aqa") ||
           name.includes("tts") ||
@@ -124,6 +126,5 @@ async function refreshModelsCatalogInBackground() {
   }
 }
 
-// Actualiza únicamente la lista de modelos en segundo plano sin consumir tokens de inferencia
 setTimeout(refreshModelsCatalogInBackground, 200);
 setInterval(refreshModelsCatalogInBackground, CACHE_TTL_MS);
