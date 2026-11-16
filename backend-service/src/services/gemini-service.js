@@ -1,208 +1,220 @@
 import {
-  getClient,
-  getCurrentModelName,
-  rotateModel,
-  getMaxRotationAttempts
+  GeminiError,
+  generateWithFallback
 } from "../clients/gemini-registry.js";
-import { rotateApiKey, getKeyCount } from "../config/gemini-keys.js";
 
-const REQUEST_TIMEOUT_MS = 18000; // 18 segundos máximo por intento
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function inputError(message) {
+  return new GeminiError(message, {
+    status: 400,
+    code: "GEMINI_INVALID_INPUT"
+  });
+}
 
 function cleanJsonString(raw) {
   return String(raw || "")
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 }
 
-function isQuotaExhausted(error) {
-  const errStr = String(error?.message || "").toLowerCase();
-  const status = error?.status || error?.statusCode;
-
-  return (
-    status === 429 ||
-    errStr.includes("429") ||
-    errStr.includes("resource_exhausted") ||
-    errStr.includes("quota")
-  );
-}
-
-function isModelOverloaded(error) {
-  const errStr = String(error?.message || "").toLowerCase();
-  const status = error?.status || error?.statusCode;
-
-  return (
-    status === 503 ||
-    errStr.includes("503") ||
-    errStr.includes("service unavailable") ||
-    errStr.includes("high demand")
-  );
-}
-
-function isRotatableError(error) {
-  const errName = String(error?.name || "");
-  const errStr = String(error?.message || "").toLowerCase();
-  const causeCode = String(error?.cause?.code || "");
-  const status = error?.status || error?.statusCode;
-
-  return (
-    errName === "TimeoutError" ||
-    errName === "AbortError" ||
-    isQuotaExhausted(error) ||
-    isModelOverloaded(error) ||
-    status === 404 ||
-    (status === 400 && (errStr.includes("image") || errStr.includes("modality") || errStr.includes("not enabled"))) ||
-    errStr.includes("404") ||
-    errStr.includes("image input modality is not enabled") ||
-    errStr.includes("unsupported modality") ||
-    errStr.includes("fetch failed") ||
-    errStr.includes("timeout") ||
-    errStr.includes("aborted") ||
-    causeCode.includes("ECONNRESET") ||
-    causeCode.includes("UND_ERR")
-  );
-}
-
-function handleRotation(error) {
-  if (isQuotaExhausted(error)) {
-    console.warn("[Gemini Service] Cuota 429 agotada. Rotando modelo/clave...");
-  } else if (isModelOverloaded(error)) {
-    console.warn("[Gemini Service] Modelo saturado (503). Rotando modelo inmediatamente...");
+/**
+ * Se excluyen partes de pensamiento y se evita reutilizar respuestas
+ * truncadas o bloqueadas como si fueran evaluaciones completas.
+ */
+function extractText(response) {
+  if (response.promptFeedback?.blockReason) {
+    throw new GeminiError(
+      "Gemini bloqueó la solicitud. Requiere revisión manual.",
+      {
+        status: 422,
+        code: "GEMINI_BLOCKED_RESPONSE"
+      }
+    );
   }
-  rotateModel();
+
+  const candidate = response.candidates?.[0];
+
+  if (!candidate) {
+    throw new GeminiError("Gemini no devolvió una respuesta.", {
+      retryable: true,
+      code: "GEMINI_EMPTY_RESPONSE"
+    });
+  }
+
+  if (candidate.finishReason === "MAX_TOKENS") {
+    throw new GeminiError("Gemini devolvió una respuesta truncada.", {
+      retryable: true,
+      code: "GEMINI_TRUNCATED_RESPONSE"
+    });
+  }
+
+  if (candidate.finishReason && candidate.finishReason !== "STOP") {
+    throw new GeminiError(
+      "La generación no finalizó normalmente. Requiere revisión manual.",
+      {
+        status: 422,
+        code: "GEMINI_INCOMPLETE_RESPONSE"
+      }
+    );
+  }
+
+  const text = (candidate.content?.parts || [])
+    .filter(part => !part.thought && typeof part.text === "string")
+    .map(part => part.text)
+    .join("")
+    .trim();
+
+  if (!text) {
+    throw new GeminiError("Gemini devolvió texto vacío.", {
+      retryable: true,
+      code: "GEMINI_EMPTY_RESPONSE"
+    });
+  }
+
+  return text;
+}
+
+function parseEvaluation(response) {
+  const text = extractText(response);
+  let result;
+
+  try {
+    result = JSON.parse(cleanJsonString(text));
+  } catch {
+    throw new GeminiError("Gemini devolvió JSON no válido.", {
+      retryable: true,
+      code: "GEMINI_INVALID_JSON"
+    });
+  }
+
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new GeminiError("La evaluación no contiene un objeto JSON.", {
+      retryable: true,
+      code: "GEMINI_INVALID_JSON"
+    });
+  }
+
+  // Conserva el objeto que espera el controlador de evaluación.
+  return result;
+}
+
+function imagePart(canvasImage) {
+  if (
+    canvasImage == null ||
+    canvasImage === "" ||
+    canvasImage === "[DIAGRAMA_EN_CANVAS]"
+  ) {
+    return null;
+  }
+
+  if (typeof canvasImage !== "string") {
+    throw inputError("canvasImage debe ser una cadena base64.");
+  }
+
+  const value = canvasImage.trim();
+  const dataUrl = value.match(
+    /^data:(image\/(?:png|jpeg|webp|heic|heif));base64,([\s\S]+)$/i
+  );
+
+  if (value.startsWith("data:") && !dataUrl) {
+    throw inputError("El formato de la imagen no es compatible.");
+  }
+
+  const mimeType = dataUrl ? dataUrl[1].toLowerCase() : "image/png";
+  const data = (dataUrl ? dataUrl[2] : value).replace(/\s/g, "");
+
+  if (
+    !data ||
+    data.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(data)
+  ) {
+    throw inputError("La imagen no contiene base64 válido.");
+  }
+
+  return { inlineData: { mimeType, data } };
 }
 
 export async function generateFormativeFeedback(inputData) {
-  const maxAttempts = getMaxRotationAttempts();
-  let lastError = null;
+  const input =
+    typeof inputData === "string"
+      ? { promptText: inputData }
+      : inputData;
 
-  const promptText = typeof inputData === "string" ? inputData : inputData.promptText;
-  const canvasImage = typeof inputData === "object" ? inputData.canvasImage : null;
-
-  const hasImage = Boolean(
-    canvasImage &&
-    typeof canvasImage === "string" &&
-    canvasImage.trim().length > 100 &&
-    canvasImage !== "[DIAGRAMA_EN_CANVAS]"
-  );
+  if (
+    !input ||
+    typeof input.promptText !== "string" ||
+    !input.promptText.trim()
+  ) {
+    throw inputError("La evaluación requiere un promptText no vacío.");
+  }
 
   const parts = [];
-  if (hasImage) {
-    const cleanBase64 = String(canvasImage)
-      .replace(/^data:image\/[a-z]+;base64,/, "")
-      .replace(/\s/g, "");
+  const image = imagePart(input.canvasImage);
 
-    if (cleanBase64.length > 100) {
-      parts.push({
-        inlineData: {
-          mimeType: "image/png",
-          data: cleanBase64
-        }
-      });
-    }
-  }
-  parts.push({ text: promptText });
+  if (image) parts.push(image);
+  parts.push({ text: input.promptText });
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let modelName = getCurrentModelName();
-
-    if (hasImage && (modelName.includes("transcribe") || modelName.includes("embedding") || modelName.includes("text-"))) {
-      rotateModel();
-      modelName = getCurrentModelName();
-    }
-
-    try {
-      const client = getClient();
-      const model = client.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2
-        }
-      });
-
-      const result = await model.generateContent(
-        { contents: [{ role: "user", parts }] },
-        { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
-      );
-      const rawText = result.response.text();
-
-      console.log(`[Gemini Triaje] Evaluación exitosa con [${modelName}].`);
-
-      try {
-        return JSON.parse(rawText);
-      } catch {
-        const cleaned = cleanJsonString(rawText);
-        return JSON.parse(cleaned);
+  return generateWithFallback(
+    {
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        responseMimeType: "application/json"
       }
-    } catch (error) {
-      lastError = error;
-
-      if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Triaje] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}). Rotando...`);
-        handleRotation(error);
-        await sleep(300);
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  throw new Error(`Todos los modelos/claves fallaron. Último error: ${lastError?.message}`);
+    },
+    parseEvaluation
+  );
 }
 
 export async function generateChatResponse(systemPrompt, messages = []) {
   if (!Array.isArray(messages) || messages.length === 0) {
-    throw new Error("El arreglo de mensajes no puede estar vacío.");
+    throw inputError("El arreglo de mensajes no puede estar vacío.");
   }
 
-  const maxAttempts = getMaxRotationAttempts();
-  let lastError = null;
+  const contents = [];
 
-  const lastMessage = messages[messages.length - 1]?.content || "";
-  const geminiHistory = messages.slice(0, -1).map((msg) => ({
-    role: msg.role === "assistant" ? "model" : "user",
-    parts: [{ text: msg.content || "" }]
-  }));
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const modelName = getCurrentModelName();
-
-    try {
-      const client = getClient();
-      const model = client.getGenerativeModel({
-        model: modelName,
-        systemInstruction: systemPrompt,
-        generationConfig: {
-          temperature: 0.7
-        }
-      });
-
-      const chatSession = model.startChat({ history: geminiHistory });
-      const result = await chatSession.sendMessage(
-        lastMessage,
-        { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
+  for (const message of messages) {
+    if (
+      !message ||
+      !["user", "assistant", "model"].includes(message.role) ||
+      typeof message.content !== "string" ||
+      !message.content.trim()
+    ) {
+      throw inputError(
+        "Cada mensaje debe tener un rol válido y contenido no vacío."
       );
-      const rawText = result.response.text();
+    }
 
-      console.log(`[Gemini Chat] Respuesta exitosa con [${modelName}].`);
-      return rawText;
-    } catch (error) {
-      lastError = error;
+    const role = message.role === "user" ? "user" : "model";
+    const previous = contents[contents.length - 1];
 
-      if (isRotatableError(error) && attempt < maxAttempts) {
-        console.warn(`[Gemini Chat] Intento ${attempt}/${maxAttempts} falló con [${modelName}] (${error.message}). Rotando...`);
-        handleRotation(error);
-        await sleep(300);
-        continue;
-      }
-
-      throw error;
+    // Evita turnos consecutivos del mismo rol en el historial.
+    if (previous?.role === role) {
+      previous.parts.push({ text: message.content });
+    } else {
+      contents.push({
+        role,
+        parts: [{ text: message.content }]
+      });
     }
   }
 
-  throw new Error(`Todos los modelos/claves fallaron en el chat. Último error: ${lastError?.message}`);
+  if (
+    contents[0].role !== "user" ||
+    contents[contents.length - 1].role !== "user"
+  ) {
+    throw inputError(
+      "El historial del chat debe comenzar y terminar con un mensaje del usuario."
+    );
+  }
+
+  const body = { contents };
+
+  if (typeof systemPrompt === "string" && systemPrompt.trim()) {
+    body.systemInstruction = {
+      parts: [{ text: systemPrompt }]
+    };
+  }
+
+  return generateWithFallback(body, extractText);
 }

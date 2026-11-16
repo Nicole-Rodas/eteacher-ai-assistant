@@ -16,8 +16,12 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*/*"],
-      "css": ["src/styles/panel.css"],
+      "matches": [
+        "https://programino.eteacher.be/*"
+      ],
+      "css": [
+        "src/styles/panel.css"
+      ],
       "js": [
         "src/content/i18n.js",
         "src/content/storage-service.js",
@@ -27,7 +31,7 @@
         "src/content/dom-adapter.js",
         "src/content/api-client.js",
         "src/content/ui-panel.js",
-        "src/content/chat-panel.js", 
+        "src/content/chat-panel.js",
         "src/content/content-main.js"
       ],
       "run_at": "document_idle"

@@ -53,7 +53,8 @@ window.ETeacherClient = {
     if (!cleanAnswer && !hasCanvas) {
       return {
         certaintyLevel: "BAJA",
-        certaintyScore: 100,
+        // Sin contenido evaluable: no hay evidencia para asignar certeza.
+        certaintyScore: 0,
         nota: 0,
         justificacion: str.blankJust,
         layers: {
@@ -68,7 +69,8 @@ window.ETeacherClient = {
     if (!hasCanvas && cleanAnswer.length < 5) {
       return {
         certaintyLevel: "BAJA",
-        certaintyScore: 80,
+        // Mantener BAJA (0–49), coherente con el filtro corto del servidor.
+        certaintyScore: 15,
         nota: 10,
         justificacion: str.shortJust,
         layers: {

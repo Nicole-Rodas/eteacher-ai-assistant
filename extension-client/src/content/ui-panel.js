@@ -207,14 +207,21 @@ window.ETeacherUI = {
           triageModal.style.pointerEvents = "none";
         }
 
+        const orderedSelected = [...selected].reverse();
         let successCount = 0;
 
-        for (let i = 0; i < selected.length; i++) {
-          const row = selected[i];
-          btnAccept.innerText = `${this.t("INJECTING_PROGRESS")} (${i + 1}/${selected.length}): ${row.nombre.split(" ")[0]}...`;
+        for (let i = 0; i < orderedSelected.length; i++) {
+          const row = orderedSelected[i];
+          btnAccept.innerText = `${this.t("INJECTING_PROGRESS")} (${i + 1}/${orderedSelected.length}): ${row.nombre.split(" ")[0]}...`;
 
+          let switched = true;
           if (window.ETeacherDOM?.selectStudentInCombobox) {
-            await window.ETeacherDOM.selectStudentInCombobox(row.nombre);
+            switched = await window.ETeacherDOM.selectStudentInCombobox(row.nombre);
+          }
+
+          if (!switched) {
+            console.warn(`[eTeacher] Omitiendo inyección para ${row.nombre}: no coincidió el estudiante activo.`);
+            continue;
           }
 
           const activeText = row.layers[row.selectedLayer] || "";
@@ -244,7 +251,7 @@ window.ETeacherUI = {
             }
           }
 
-          if (selected.length > 1) {
+          if (orderedSelected.length > 1) {
             await new Promise(res => setTimeout(res, 450));
           }
         }
@@ -256,10 +263,10 @@ window.ETeacherUI = {
         this.renderTable();
         const activeLang = window.ETeacherI18n?.detectLanguage ? window.ETeacherI18n.detectLanguage() : "es";
         const okMessages = {
-          es: `¡Se inyectaron y guardaron ${successCount} de ${selected.length} evaluaciones!`,
-          en: `Injected and saved ${successCount} of ${selected.length} evaluations!`,
-          fr: `${successCount} évaluations sur ${selected.length} ont été injectées et enregistrées !`,
-          nl: `${successCount} van de ${selected.length} evaluaties zijn ingevoegd en opgeslagen!`
+          es: `¡Se inyectaron y guardaron ${successCount} de ${orderedSelected.length} evaluaciones!`,
+          en: `Injected and saved ${successCount} of ${orderedSelected.length} evaluations!`,
+          fr: `${successCount} évaluations sur ${orderedSelected.length} ont été injectées et enregistrées !`,
+          nl: `${successCount} van de ${orderedSelected.length} evaluaties zijn ingevoegd en opgeslagen!`
         };
 
         this.showBanner(
@@ -300,6 +307,7 @@ window.ETeacherUI = {
     const isCacheValid = cached &&
       Array.isArray(cached) &&
       cached.length > 0 &&
+      cached.length === (batchData || []).length &&
       cached[0].problemStatement === this.activeExercise.problemStatement;
 
     if (isCacheValid) {

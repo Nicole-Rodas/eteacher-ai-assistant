@@ -42,7 +42,6 @@ window.ETeacherChat = {
     if (sendBtn) sendBtn.title = this.t("CHAT_SEND");
     if (typingText) typingText.textContent = `IA ${this.t("CHAT_TYPING")}`;
 
-    // Si aún no hay mensajes enviados por el usuario, actualiza el saludo al idioma vigente
     if (this.history.length === 0) {
       const container = document.getElementById("et-chat-messages");
       if (container) {
@@ -141,6 +140,38 @@ window.ETeacherChat = {
     });
   },
 
+  cleanAIResponse(raw) {
+    if (!raw) return "";
+
+    if (typeof raw === "object") {
+      return raw.respuesta || raw.response || raw.message || raw.reply || raw.justificacion || JSON.stringify(raw);
+    }
+
+    let text = String(raw).trim();
+    text = text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```$/i, "")
+      .replace(/^JSON\s*:?\s*/i, "")
+      .trim();
+
+    if (text.startsWith("{") && text.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(text);
+        const extracted = parsed.respuesta || parsed.response || parsed.message || parsed.reply || parsed.justificacion || parsed.correctiva;
+        if (extracted) {
+          return String(extracted).trim();
+        }
+      } catch {
+        const match = text.match(/"(?:respuesta|response|message|reply)"\s*:\s*"([\s\S]*)"\s*\}$/i);
+        if (match && match[1]) {
+          return match[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+        }
+      }
+    }
+
+    return text;
+  },
+
   addMessage(role, text) {
     const msgDiv = document.createElement("div");
     msgDiv.className = "et-msg et-msg-" + (role === "user" ? "user" : "ai");
@@ -197,7 +228,8 @@ window.ETeacherChat = {
       }
 
       const data = await response.json();
-      const aiText = data.respuesta || "Respuesta sin contenido.";
+      const rawReply = data.respuesta ?? data.response ?? data;
+      const aiText = this.cleanAIResponse(rawReply) || "Respuesta sin contenido.";
 
       document.getElementById("et-chat-typing").style.display = "none";
       this.history.push({ role: "assistant", content: aiText });

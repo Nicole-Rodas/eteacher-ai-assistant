@@ -11,12 +11,18 @@ window.ETeacherDOM = {
 
   extractCanvasBase64(containerElement) {
     if (!containerElement) return null;
-    const canvas = containerElement.querySelector("canvas");
-    if (!canvas) return null;
+    const canvases = Array.from(containerElement.querySelectorAll("canvas"));
+    if (canvases.length === 0) return null;
+
+    const mainCanvas = canvases
+      .filter(c => c.width > 50 && c.height > 50)
+      .sort((a, b) => (b.width * b.height) - (a.width * a.height))[0] || canvases[0];
 
     try {
-      const dataUrl = canvas.toDataURL("image/png");
-      return dataUrl.split(",")[1] || null;
+      const dataUrl = mainCanvas.toDataURL("image/png");
+      const base64 = dataUrl.split(",")[1] || null;
+      if (!base64 || base64.length < 1500) return null;
+      return base64;
     } catch {
       return null;
     }
@@ -84,6 +90,7 @@ window.ETeacherDOM = {
       const partesEncontradas = [];
       const tiposDetectados = [];
       const submissionsMeta = [];
+      let hasDiagramSubmission = false;
 
       submissions.forEach((sub, idx) => {
         if (!sub || typeof sub !== "object") return;
@@ -98,12 +105,25 @@ window.ETeacherDOM = {
           const typeObj = subType[tipoKey];
           givenFeedback = typeObj?.data?.given_feedback || null;
 
+          const lowerKey = tipoKey.toLowerCase();
+          const rawJsonStr = JSON.stringify(typeObj || {});
+          const looksLikeDiagram =
+            lowerKey.includes("diagram") ||
+            lowerKey.includes("flow") ||
+            lowerKey.includes("canvas") ||
+            lowerKey.includes("draw") ||
+            lowerKey.includes("chart") ||
+            lowerKey.includes("block") ||
+            (typeObj && typeof typeObj === "object" && Object.keys(typeObj).length > 0 && rawJsonStr.length > 10);
+
           const extractedContent = this.extractDeepContent(typeObj);
           if (extractedContent && extractedContent.length > 0) {
             const label = submissions.length > 1
               ? `[PARTE ${idx + 1} - ${tipoKey.toUpperCase()}]:\n${extractedContent}`
               : `[${tipoKey.toUpperCase()}]:\n${extractedContent}`;
             partesEncontradas.push(label);
+          } else if (looksLikeDiagram) {
+            hasDiagramSubmission = true;
           }
         }
 
@@ -115,11 +135,8 @@ window.ETeacherDOM = {
         });
       });
 
-      const modalContent = document.querySelector(".submission_modal_content") || document.body;
-      const canvasExtracted = this.extractCanvasBase64(modalContent);
-
       const finalCode = partesEncontradas.join("\n\n").trim();
-      const hasSubmission = finalCode.length > 0 || Boolean(canvasExtracted);
+      const hasSubmission = finalCode.length > 0 || hasDiagramSubmission || submissions.length > 0;
       const alreadyGraded = submissionsMeta.some(
         m => m.given_feedback !== null || (m.marks && m.marks.length > 0)
       );
@@ -131,9 +148,10 @@ window.ETeacherDOM = {
         nombre: this.cleanText(studentInfo.name || (`Estudiante ${index + 1}`)),
         grupo: this.cleanText(classInfo.name || ""),
         gestion: classInfo.year || "",
-        studentCode: finalCode || (canvasExtracted ? "[DIAGRAMA_EN_CANVAS]" : "[SIN ENTREGA]"),
-        canvasImage: canvasExtracted,
-        tipoRespuesta: tiposDetectados.length > 0 ? tiposDetectados.join(" + ") : (canvasExtracted ? "Diagrama" : "Sin Entrega"),
+        studentCode: finalCode || (hasDiagramSubmission ? "[DIAGRAMA_EN_CANVAS]" : "[SIN ENTREGA]"),
+        canvasImage: null,
+        needsCanvasCapture: hasDiagramSubmission || (submissions.length > 0 && finalCode.length === 0),
+        tipoRespuesta: tiposDetectados.length > 0 ? tiposDetectados.join(" + ") : (hasDiagramSubmission ? "Diagrama" : "Sin Entrega"),
         hasSubmission: hasSubmission,
         alreadyGraded: alreadyGraded,
         submissionsMeta: submissionsMeta,
@@ -293,7 +311,7 @@ window.ETeacherDOM = {
       const inputNombre = document.querySelector(".thaw-combobox__input");
       const currentName = inputNombre ? this.cleanText(inputNombre.value) : "";
       if (currentName && currentName !== previousName) {
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 250));
         return true;
       }
       await new Promise(r => setTimeout(r, 80));
@@ -301,10 +319,47 @@ window.ETeacherDOM = {
     return false;
   },
 
+  async waitForCanvasUpdate(previousBase64, maxWaitMs = 2500) {
+    const modalContent = document.querySelector(".submission_modal_content") || document.body;
+    const start = Date.now();
+
+    while (Date.now() - start < maxWaitMs) {
+      const currentB64 = this.extractCanvasBase64(modalContent);
+      if (currentB64 && currentB64 !== previousBase64) {
+        await new Promise(r => setTimeout(r, 300));
+        return this.extractCanvasBase64(modalContent);
+      }
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    return this.extractCanvasBase64(modalContent);
+  },
+
   async harvestAllClassSubmissions(btnElement) {
-    const intercepted = window.ETeacherNetwork?._interceptedBatch;
-    if (intercepted && intercepted.length > 0) {
-      return intercepted;
+    const modalContent = document.querySelector(".submission_modal_content") || document.body;
+    const pageHasCanvas = Boolean(modalContent.querySelector("canvas"));
+
+    if (!pageHasCanvas) {
+      const intercepted = window.ETeacherNetwork?._interceptedBatch;
+      if (intercepted && intercepted.length > 0) {
+        return intercepted;
+      }
+    }
+
+    if (pageHasCanvas) {
+      let rewindGuard = 0;
+      while (rewindGuard < 300) {
+        rewindGuard++;
+        const prevBtn = document.querySelector(".submission_modal_prev");
+        const prevDisabled = !prevBtn || prevBtn.classList.contains("hidden") || prevBtn.style.display === "none" || prevBtn.disabled;
+        if (prevDisabled) break;
+
+        const currName = this.getCurrentActiveStudentName();
+        prevBtn.click();
+        const moved = await this.waitForStudentChange(currName, 2000);
+        if (!moved) break;
+      }
+      await new Promise(r => setTimeout(r, 350));
     }
 
     const allStudentsData = [];
@@ -314,6 +369,7 @@ window.ETeacherDOM = {
 
     while (hasNext && failsafe < 300) {
       failsafe++;
+
       const currentStudent = this.extractSubmissionsForExercise(context, false)[0];
 
       if (currentStudent) {
@@ -337,9 +393,14 @@ window.ETeacherDOM = {
 
       if (!isHidden) {
         const previousName = currentStudent ? currentStudent.nombre : "";
+        const previousCanvas = pageHasCanvas ? this.extractCanvasBase64(modalContent) : null;
         nextBtn.click();
         const changed = await this.waitForStudentChange(previousName, 2500);
-        if (!changed) hasNext = false;
+        if (!changed) {
+          hasNext = false;
+        } else if (pageHasCanvas) {
+          await this.waitForCanvasUpdate(previousCanvas, 1800);
+        }
       } else {
         hasNext = false;
       }
@@ -477,81 +538,134 @@ window.ETeacherDOM = {
     return inputNombre ? this.cleanText(inputNombre.value) : "";
   },
 
-  async selectStudentInCombobox(targetStudentName, maxWaitMs = 3500) {
+  getNavigationButtons() {
+    const combobox = document.querySelector(".thaw-combobox");
+    const header = combobox?.parentElement || document;
+    const prevBtn =
+      document.querySelector(".submission_modal_prev") ||
+      Array.from(header.querySelectorAll("button")).find(b => !b.className.includes("et-") && (b.textContent.trim() === "<" || b.getAttribute("aria-label")?.toLowerCase().includes("prev")));
+    const nextBtn =
+      document.querySelector(".submission_modal_next") ||
+      Array.from(header.querySelectorAll("button")).find(b => !b.className.includes("et-") && (b.textContent.trim() === ">" || b.getAttribute("aria-label")?.toLowerCase().includes("next")));
+    return { prevBtn, nextBtn };
+  },
+
+  async rewindToFirstStudent(maxSteps = 150) {
+    let guard = 0;
+    while (guard < maxSteps) {
+      guard++;
+      const { prevBtn } = this.getNavigationButtons();
+      const disabled = !prevBtn || prevBtn.disabled || prevBtn.classList.contains("hidden") || prevBtn.style.display === "none";
+      if (disabled) break;
+
+      const prevName = this.getCurrentActiveStudentName();
+      prevBtn.click();
+      const changed = await this.waitForStudentChange(prevName, 2000);
+      if (!changed) break;
+    }
+    await new Promise(r => setTimeout(r, 300));
+  },
+
+  async selectStudentInCombobox(targetStudentName, maxWaitMs = 5000) {
     const input = document.querySelector(".thaw-combobox__input");
     if (!input) return false;
 
-    const current = this.cleanText(input.value).toLowerCase();
-    const target = this.cleanText(targetStudentName).toLowerCase();
-    if (current && (current.includes(target) || target.includes(current))) {
+    const normalize = (s) => this.cleanText(s).toLowerCase().replace(/\s+/g, " ");
+    const target = normalize(targetStudentName);
+    if (!target) return false;
+
+    // Coincidencia EXACTA: evita que "Usuario Prueba" coincida con "Usuario Prueba8"
+    const isExactMatch = (name) => normalize(name) === target;
+
+    if (isExactMatch(input.value)) {
       return true;
     }
 
-    // 1. Abrir menú desplegable
+    // 1. Abrir el menú del combobox Thaw UI y buscar por textContent exacto
     input.focus();
+    input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     input.click();
-    input.dispatchEvent(new Event("focus", { bubbles: true }));
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 250));
 
-    await new Promise(r => setTimeout(r, 200));
-
-    // 2. Buscar opciones del combobox
     const options = Array.from(document.querySelectorAll(
-      ".thaw-combobox-list__option, .thaw-select-option, [role='option'], .thaw-combobox__menu-item"
+      "[role='option'], .thaw-combobox-list__option, .thaw-select-option, .thaw-combobox__menu-item"
     ));
 
-    const matchedOption = options.find(opt => {
-      const optText = this.cleanText(opt.innerText || opt.textContent).toLowerCase();
-      return optText.includes(target) || target.includes(optText);
-    });
-
+    const matchedOption = options.find(opt => isExactMatch(opt.textContent));
     if (matchedOption) {
-      matchedOption.click();
-    } else {
-      const nextBtn = document.querySelector(".submission_modal_next");
-      if (nextBtn && !nextBtn.disabled) {
-        const prev = this.getCurrentActiveStudentName();
-        nextBtn.click();
-        await this.waitForStudentChange(prev, 1500);
+      matchedOption.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      matchedOption.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      if (typeof matchedOption.click === "function") {
+        matchedOption.click();
+      }
+
+      const start = Date.now();
+      while (Date.now() - start < 2500) {
+        if (isExactMatch(this.getCurrentActiveStudentName())) {
+          await new Promise(r => setTimeout(r, 350));
+          return true;
+        }
+        await new Promise(r => setTimeout(r, 100));
       }
     }
 
-    // 3. Confirmar cambio en el combobox
-    const start = Date.now();
-    while (Date.now() - start < maxWaitMs) {
-      const activeName = this.getCurrentActiveStudentName().toLowerCase();
-      if (activeName && (activeName.includes(target) || target.includes(activeName))) {
-        await new Promise(r => setTimeout(r, 250));
-        return true;
-      }
-      await new Promise(r => setTimeout(r, 100));
-    }
+    // 2. Respaldo secuencial: buscar primero hacia atrás (prevBtn) y luego hacia adelante (nextBtn)
+    const stepWithButton = async (getBtn) => {
+      let guard = 0;
+      while (guard < 150) {
+        guard++;
+        if (isExactMatch(this.getCurrentActiveStudentName())) {
+          await new Promise(r => setTimeout(r, 350));
+          return true;
+        }
+        const btn = getBtn();
+        const disabled = !btn || btn.disabled || btn.classList.contains("hidden") || btn.style.display === "none";
+        if (disabled) break;
 
+        const prevName = this.getCurrentActiveStudentName();
+        btn.click();
+        const changed = await this.waitForStudentChange(prevName, 2000);
+        if (!changed) break;
+      }
+      return isExactMatch(this.getCurrentActiveStudentName());
+    };
+
+    if (await stepWithButton(() => this.getNavigationButtons().prevBtn)) return true;
+    if (await stepWithButton(() => this.getNavigationButtons().nextBtn)) return true;
+
+    console.warn(`[eTeacher] No se pudo posicionar en el estudiante exacto: "${targetStudentName}" (activo: "${this.getCurrentActiveStudentName()}")`);
     return false;
   },
 
   async injectFeedbackAndGrade(feedbackText, grade = null) {
-    // 1. Abrir el editor nativo de Programino (ignora cualquier botón de la extensión)
-    let tuiContainer = document.querySelector("leptos-tui-instance");
+    const modalScope = document.querySelector(".submission_modal_content") || document;
 
+    // 1. Esperar a que se desmonte cualquier editor residual del estudiante anterior
+    const waitCloseStart = Date.now();
+    while (Date.now() - waitCloseStart < 1500) {
+      if (!modalScope.querySelector("leptos-tui-instance")) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    // 2. Abrir el editor nativo del estudiante actual dentro del modal
+    let tuiContainer = modalScope.querySelector("leptos-tui-instance");
     if (!tuiContainer) {
-      const openBtn = Array.from(document.querySelectorAll("button.thaw-button, button"))
+      const openBtn = Array.from(modalScope.querySelectorAll("button.thaw-button, button"))
         .find(b => !b.className.includes("et-") && (b.innerText.trim() === "Editar" || b.innerText.includes("Añadir comentarios")));
 
       if (openBtn) {
         openBtn.click();
       } else {
-        console.warn("[eTeacher] No se localizó el botón de edición nativo de Programino.");
+        console.warn("[eTeacher] No se localizó el botón 'Editar' o 'Añadir comentarios' en el estudiante actual.");
         return false;
       }
     }
 
-    // 2. Esperar el montaje reactivo de Leptos y los contenedores ProseMirror
+    // 3. Esperar el montaje fresco de Leptos y ProseMirror
     let proses = [];
     const startWait = Date.now();
-
     while (Date.now() - startWait < 4000) {
-      tuiContainer = document.querySelector("leptos-tui-instance");
+      tuiContainer = modalScope.querySelector("leptos-tui-instance");
       if (tuiContainer) {
         proses = Array.from(tuiContainer.querySelectorAll(".ProseMirror"));
         if (proses.length > 0) break;
@@ -564,9 +678,11 @@ window.ETeacherDOM = {
       return false;
     }
 
-    // 3. Inyectar la nota en el input numérico
+    await new Promise(r => setTimeout(r, 200));
+
+    // 4. Inyectar la nota en el input numérico del modal
     if (grade !== null && grade !== undefined) {
-      const gradeInput = document.querySelector("input.range-input, input[type='number']");
+      const gradeInput = modalScope.querySelector("input.range-input, input[type='number']");
       if (gradeInput) {
         gradeInput.focus();
         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
@@ -583,7 +699,7 @@ window.ETeacherDOM = {
 
     await new Promise(r => setTimeout(r, 150));
 
-    // 4. Inyectar el texto en todos los contenedores ProseMirror y sincronizar el textarea interno
+    // 5. Reemplazar el contenido de ProseMirror y del textarea interno de Toast UI
     const formattedHtml = feedbackText
       .split("\n")
       .map(line => `<p>${line || "<br>"}</p>`)
@@ -592,27 +708,37 @@ window.ETeacherDOM = {
     proses.forEach(p => {
       p.focus();
       p.innerHTML = formattedHtml;
-      p.dispatchEvent(new Event("input", { bubbles: true }));
+      p.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: feedbackText }));
       p.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
     const internalTextarea = tuiContainer.querySelector("textarea");
     if (internalTextarea) {
-      internalTextarea.value = feedbackText;
+      const taSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      if (taSetter) {
+        taSetter.call(internalTextarea, feedbackText);
+      } else {
+        internalTextarea.value = feedbackText;
+      }
       internalTextarea.dispatchEvent(new Event("input", { bubbles: true }));
       internalTextarea.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 300));
 
-    // 5. Presionar el botón Guardar nativo de Programino
-    const btnGuardar = Array.from(document.querySelectorAll("button.thaw-button, button"))
+    // 6. Pulsar Guardar y esperar a que Leptos cierre el editor antes de avanzar al siguiente alumno
+    const btnGuardar = Array.from(modalScope.querySelectorAll("button.thaw-button, button"))
       .find(b => !b.className.includes("et-") && b.innerText.trim() === "Guardar");
 
     if (btnGuardar && !btnGuardar.disabled) {
       btnGuardar.click();
-      // Margen para que el backend de Programino procese y desmonte el editor
-      await new Promise(r => setTimeout(r, 800));
+
+      const saveStart = Date.now();
+      while (Date.now() - saveStart < 3000) {
+        if (!modalScope.querySelector("leptos-tui-instance")) break;
+        await new Promise(r => setTimeout(r, 120));
+      }
+      await new Promise(r => setTimeout(r, 400));
     }
 
     return true;
@@ -628,21 +754,18 @@ window.ETeacherDOM = {
         onProgress({ current: i + 1, total, studentName: item.nombre });
       }
 
-      // 1. Cambiar al estudiante en el combobox de Programino
       const switched = await this.selectStudentInCombobox(item.nombre);
       if (!switched) {
         console.warn(`[eTeacher] No se pudo cambiar automáticamente a ${item.nombre}`);
+        continue;
       }
 
-      // 2. Extraer el texto de la capa pedagógica seleccionada
       const textToInject = item.selectedText || item.layers?.correctiva || item.justificacion || "";
       const gradeToInject = item.nota !== undefined ? item.nota : null;
 
-      // 3. Escribir en el editor y guardar
       await this.injectFeedbackAndGrade(textToInject, gradeToInject);
       inyectados++;
 
-      // Pausa para estabilización entre envíos
       await new Promise(res => setTimeout(res, 500));
     }
 
