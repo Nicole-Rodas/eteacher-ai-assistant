@@ -202,10 +202,10 @@ La revisión del registro de modelos incluida con esta configuración utiliza:
 
 - Una única variable `GEMINI_API_KEY`.
 - Descubrimiento a través del catálogo de modelos y caché en memoria de 12 horas.
-- Familias estables permitidas: **Gemini Flash → Gemini Flash Lite → Gemini Pro**.
+- Familias estables permitidas: **Gemini Flash Lite → Gemini Flash → Gemini Pro**.
 - Orden por versión numérica descendente dentro de cada familia, seguido de alias `latest` admitidos.
 - Exclusión de Gemma, familias desconocidas, variantes especializadas, `preview` y experimentales.
-- Hasta 6 intentos, con un máximo de 6 segundos por intento y un presupuesto total de 14 segundos para el flujo de inferencia, incluido el descubrimiento cuando se necesita.
+- Hasta 6 intentos, con un máximo de 18 segundos por intento y un presupuesto total de 45 segundos para el flujo de inferencia, incluido el descubrimiento cuando se necesita.
 - Cambio al siguiente candidato ante errores recuperables, como 404, 429, 503 o agotamiento del tiempo.
 - Retirada temporal de candidatos que responden 404 y solicitud de actualización del catálogo.
 

@@ -4,8 +4,9 @@ import { getActiveApiKey } from "../config/gemini-keys.js";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const DISCOVERY_TIMEOUT_MS = 3000;
-const ATTEMPT_TIMEOUT_MS = 6000;
-const TOTAL_TIMEOUT_MS = 14000;
+// Margen para evaluaciones completas; el cliente espera hasta 55 segundos.
+const ATTEMPT_TIMEOUT_MS = 18000;
+const TOTAL_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS = 6;
 const REFRESH_RETRY_MS = 30000;
 let cachedModels = [];
@@ -118,7 +119,7 @@ function modelPolicy(model) {
   if (!alias && !/^\d/.test(versionOrFamily)) return null;
   const family = alias ? versionOrFamily.toLowerCase() : familyOrAlias.toLowerCase();
   return {
-    tier: family === "flash" ? 0 : family === "flash-lite" ? 1 : 2,
+    tier: family === "flash-lite" ? 0 : family === "flash" ? 1 : 2,
     version: alias ? [] : versionOrFamily.split(".").map(Number),
     alias
   };
@@ -236,7 +237,7 @@ export async function generateWithFallback(body, parseResponse) {
       console.warn(`[Gemini] Intento ${attempts} fallido: ${model.name}; ${error.code}; HTTP ${error.status}.`);
     }
   }
-  if (remainingMs(deadline) <= 0) throw timeoutError("Se agotó el presupuesto total de 14 segundos.");
+  if (remainingMs(deadline) <= 0) throw timeoutError("Se agotó el presupuesto total de 45 segundos.");
   throw new GeminiError("No se pudo completar la solicitud con los modelos permitidos.", {
     status: lastError?.status === 429 ? 429 : 503,
     retryAfterMs: lastError?.retryAfterMs || 0, code: "GEMINI_MODELS_UNAVAILABLE"
