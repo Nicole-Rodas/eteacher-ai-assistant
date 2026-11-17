@@ -381,11 +381,7 @@ window.ETeacherDOM = {
           btnElement.innerHTML = `${this.ICONS.loader}Recolectando: ${allStudentsData.length}...`;
         }
 
-        try {
-          if (typeof chrome !== "undefined" && chrome.storage?.local) {
-            await chrome.storage.local.set({ et_current_batch: allStudentsData });
-          }
-        } catch {}
+        // El lote permanece solo en memoria; no se escribe en chrome.storage.local.
       }
 
       const nextBtn = document.querySelector(".submission_modal_next");

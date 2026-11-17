@@ -3,6 +3,7 @@
   "name": "eTeacher Formative AI Assistant",
   "version": "1.0.0",
   "description": "Asistente de retroalimentación formativa Human-in-the-Loop para Programino eTeacher.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDQBr9OBn8t4JR2VOyXNHFDgRi77sx0V2GDwPDY8WcFDuvIty35kqa8d9QuwUmaRmpi2A7DstpejRF8r1hO/v+2XFomRQPeM1tCgHwXGw2MXpp2oK/Hrf9dP0Ps3aOm8+7wQeUEIB1QOBYI04K/On6mOrxS3o4yhKlwpjVGVcrm2hnYKLFiO30K9KeD9hXu539Fosrfvguz5ykOy+tn5FT6+v1/HuDepMPsFKEjL7m0Hvp6GOM+aEh1F72v4OboBqg200k/MCMDJh7TmQ3YuIZO8NAbtb0V3boXQ7xRJCt8njYKXfORGTG0ErkWyMzXJibFS6UxzzZjOC4s8DtTDEwIDAQAB",
   "permissions": [
     "storage",
     "activeTab"

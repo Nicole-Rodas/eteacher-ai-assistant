@@ -18,11 +18,7 @@ window.ETeacherNetwork = {
         if (parsedBatch.length > 0) {
           this._interceptedBatch = parsedBatch;
 
-          try {
-            if (typeof chrome !== "undefined" && chrome.storage?.local) {
-              await chrome.storage.local.set({ et_current_batch: parsedBatch });
-            }
-          } catch {}
+          // El lote permanece solo en memoria; no se escribe en chrome.storage.local.
 
           if (typeof onBatchReceived === "function") {
             onBatchReceived(parsedBatch);

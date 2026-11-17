@@ -1,5 +1,6 @@
 window.ETeacherChat = {
   history: [],
+  pageGeneration: 0,
   isOpen: false,
 
   ICONS: {
@@ -204,6 +205,7 @@ window.ETeacherChat = {
   },
 
   async processAIResponse(userText) {
+    const pageGeneration = this.pageGeneration;
     document.getElementById("et-chat-typing").style.display = "block";
     this.history.push({ role: "user", content: userText });
 
@@ -223,11 +225,14 @@ window.ETeacherChat = {
         })
       });
 
+      if (pageGeneration !== this.pageGeneration) return;
+
       if (!response.ok) {
         throw new Error(`Error en el servidor: HTTP ${response.status}`);
       }
 
       const data = await response.json();
+      if (pageGeneration !== this.pageGeneration) return;
       const rawReply = data.respuesta ?? data.response ?? data;
       const aiText = this.cleanAIResponse(rawReply) || "Respuesta sin contenido.";
 
@@ -235,6 +240,7 @@ window.ETeacherChat = {
       this.history.push({ role: "assistant", content: aiText });
       this.addMessage("ai", aiText);
     } catch (error) {
+      if (pageGeneration !== this.pageGeneration) return;
       document.getElementById("et-chat-typing").style.display = "none";
       this.addErrorNotice("Error de conexión con el tutor IA. Comprueba la conexión con el servidor.");
       console.error("[eTeacher Chat Error]:", error);
